@@ -4,9 +4,7 @@ import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-
-import rocks.nt.project.financials.services.InfluxService;
-import rocks.nt.project.financials.services.PropertiesService;
+import java.util.concurrent.CompletableFuture;
 
 import com.vaadin.data.HasValue.ValueChangeListener;
 import com.vaadin.icons.VaadinIcons;
@@ -25,46 +23,56 @@ import com.vaadin.ui.TextField;
 import com.vaadin.ui.VerticalLayout;
 import com.vaadin.ui.themes.ValoTheme;
 
+import rocks.nt.project.financials.services.InfluxService;
+import rocks.nt.project.financials.services.PropertiesService;
+
 public class UnassignedProjectsTab {
-	
+
 	/**
 	 * Assign button.
 	 */
 	private Button createButton;
-	
+
 	/**
 	 * Delete button.
 	 */
 	private Button deleteButton;
-	
+
 	/**
 	 * From date field.
 	 */
 	private DateField fromDateField;
-	
+
 	/**
 	 * To date field.
 	 */
 	private DateField toDateField;
-	
+
 	/**
 	 * Project selection combo box.
 	 */
 	private ComboBox<String> projectComboBox;
-	
+
 	/**
 	 * Reload page checkbox.
 	 */
 	private CheckBoxGroup<String> reloadPageCheckBox;
-	
+
 	/**
 	 * notest text field.
 	 */
 	private TextField notesField;
 
 	/**
+	 * Projects that are in the database.
+	 */
+	private final Set<String> knownProjects = new HashSet<String>();
+
+	/**
 	 * Constructor.
-	 * @param tabSheet tab sheet to add this tab to.
+	 * 
+	 * @param tabSheet
+	 *            tab sheet to add this tab to.
 	 */
 	public UnassignedProjectsTab(TabSheet tabSheet) {
 		final VerticalLayout projectsTab = new VerticalLayout();
@@ -77,7 +85,9 @@ public class UnassignedProjectsTab {
 
 	/**
 	 * Create UI elements.
-	 * @param projectsTab root layout.
+	 * 
+	 * @param projectsTab
+	 *            root layout.
 	 */
 	private void createProjectsTab(VerticalLayout projectsTab) {
 		// Form Layout
@@ -87,6 +97,7 @@ public class UnassignedProjectsTab {
 		// Project Selection
 		projectComboBox = new ComboBox<String>("Project");
 		final List<String> projectSelection = InfluxService.getInstance().getKnownUnassignedProjects();
+		knownProjects.addAll(projectSelection);
 		projectComboBox.setItems(projectSelection);
 		projectComboBox.setIcon(VaadinIcons.TOOLBOX);
 		if (!projectSelection.isEmpty()) {
@@ -145,12 +156,15 @@ public class UnassignedProjectsTab {
 		// Assign Button
 		createButton = new Button("Assign Project");
 		createButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
-		createButton.addClickListener(event -> createUnassignedProject());
+		createButton.addClickListener(event -> CompletableFuture.runAsync(this::createUnassignedProject));
 
 		// Assign Button
 		deleteButton = new Button("Delete");
 		deleteButton.addStyleName(ValoTheme.BUTTON_DANGER);
-		deleteButton.addClickListener(event -> deleteUnassignedProject());
+		deleteButton.addClickListener(event -> CompletableFuture.runAsync(this::deleteUnassignedProject));
+		projectComboBox.addSelectionListener(e -> {
+			setEnabledStateForDeleteButton();
+		});
 
 		// Reload Page Checkbox
 		Set<String> reloadCheckItem = new HashSet<String>();
@@ -161,22 +175,21 @@ public class UnassignedProjectsTab {
 		notesField = new TextField("Notes");
 		notesField.setSizeFull();
 
-		HorizontalLayout row1 = new HorizontalLayout(projectComboBox, fromDateField, toDateField, reloadPageCheckBox, deleteButton);
+		HorizontalLayout row1 = new HorizontalLayout(projectComboBox, fromDateField, toDateField);
 
-		row1.setComponentAlignment(deleteButton, Alignment.BOTTOM_LEFT);
-
-		HorizontalLayout row2 = new HorizontalLayout(notesField, createButton);
+		HorizontalLayout row2 = new HorizontalLayout(notesField, reloadPageCheckBox, deleteButton, createButton);
 		row2.setComponentAlignment(createButton, Alignment.BOTTOM_LEFT);
-		row2.setHeight("62px");
+		row2.setComponentAlignment(deleteButton, Alignment.BOTTOM_LEFT);
+		// row2.setHeight("62px");
 
 		formLayout.addComponent(row1);
 		formLayout.addComponent(row2);
 
 		projectsTab.addComponent(formLayout);
 		projectsTab.setComponentAlignment(formLayout, Alignment.TOP_CENTER);
+		setEnabledStateForDeleteButton();
 	}
 
-	
 	/**
 	 * Set enabled state for button.
 	 */
@@ -197,13 +210,29 @@ public class UnassignedProjectsTab {
 		String project = projectComboBox.getValue();
 		String color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_UNASSIGNED_KEY);
 
-		InfluxService.getInstance().createUnassignedProject(project, fromDateField.getValue(), toDateField.getValue(), notesField.getValue().trim(), color);
+		InfluxService.getInstance().createUnassignedProject(project, fromDateField.getValue(), toDateField.getValue(),
+				notesField.getValue().trim(), color);
 
 		if (!reloadPageCheckBox.getValue().isEmpty()) {
 			Page.getCurrent().reload();
+		} else {
+			knownProjects.clear();
+			knownProjects.addAll(InfluxService.getInstance().getKnownUnassignedProjects());
+			setEnabledStateForDeleteButton();
 		}
 	}
 	
+	/**
+	 * 
+	 */
+	private void setEnabledStateForDeleteButton() {
+		if (knownProjects.contains(projectComboBox.getValue())) {
+			deleteButton.setEnabled(true);
+		} else {
+			deleteButton.setEnabled(false);
+		}
+	}
+
 	/**
 	 * Deletes unassigned project based on input data in the form.
 	 */
@@ -211,7 +240,8 @@ public class UnassignedProjectsTab {
 		String project = projectComboBox.getValue();
 		String color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_DEFAULT_KEY);
 
-		InfluxService.getInstance().deleteUnassignedProject(project, fromDateField.getValue(), toDateField.getValue(), color);
+		InfluxService.getInstance().deleteUnassignedProject(project, fromDateField.getValue(), toDateField.getValue(),
+				color);
 
 		if (!reloadPageCheckBox.getValue().isEmpty()) {
 			Page.getCurrent().reload();

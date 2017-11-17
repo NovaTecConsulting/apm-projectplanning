@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 import com.vaadin.data.HasValue.ValueChangeListener;
 import com.vaadin.icons.VaadinIcons;
@@ -133,6 +134,7 @@ public class EventTab {
 
 		// Project Selection
 		eventComboBox = new ComboBox<String>("Event");
+		eventComboBox.setTextInputAllowed(false);
 		final Set<String> eventSelection = new HashSet<String>();
 		eventSelection.add(VACATION);
 		eventSelection.add(TRAINING);
@@ -141,14 +143,6 @@ public class EventTab {
 		eventComboBox.setItems(eventSelection);
 		eventComboBox.setSelectedItem(VACATION);
 		eventComboBox.setIcon(VaadinIcons.ASTERISK);
-		eventComboBox.setNewItemHandler(inputString -> {
-			String trimmedString = inputString.trim();
-			if (!trimmedString.isEmpty()) {
-				eventSelection.add(trimmedString);
-				eventComboBox.setItems(eventSelection);
-				eventComboBox.setSelectedItem(trimmedString);
-			}
-		});
 		eventComboBox.setEmptySelectionAllowed(false);
 
 		// Time range selection
@@ -225,7 +219,7 @@ public class EventTab {
 		// Assign Button
 		assignButton = new Button("Create / Update Event");
 		assignButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
-		assignButton.addClickListener(event -> assignEvent());
+		assignButton.addClickListener(event -> CompletableFuture.runAsync(this::assignEvent));
 
 		// Reload Page Checkbox
 		Set<String> reloadCheckItem = new HashSet<String>();

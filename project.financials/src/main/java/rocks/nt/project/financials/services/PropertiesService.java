@@ -18,7 +18,7 @@ import com.vaadin.server.VaadinService;
 public class PropertiesService {
 	private static final Logger LOGGER = LoggerFactory.getLogger(PropertiesService.class);
 
-	private static final String APM_PROJECTS_HOME = "APM_PROJECTS_HOME";
+	public static final String APM_PROJECTS_HOME = "APM_PROJECTS_HOME";
 	public static final String APM_LOGIN_USER = "apm.login.user";
 	public static final String APM_LOGIN_PW = "apm.login.pw";
 	public static final String GRAFANA_DASHBOARD_PROJECTS_KEY = "grafana.dashboard.projects.url";
@@ -64,7 +64,7 @@ public class PropertiesService {
 	
 	private static PropertiesService instance;
 
-	public static PropertiesService getInstance() {
+	public synchronized static PropertiesService getInstance() {
 		if (null == instance) {
 			instance = new PropertiesService();
 		}

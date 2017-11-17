@@ -84,7 +84,7 @@ public class InfluxService {
 	 * 
 	 * @return singleton instance.
 	 */
-	public static InfluxService getInstance() {
+	public synchronized static InfluxService getInstance() {
 		if (null == instance) {
 			instance = new InfluxService();
 		}
@@ -262,40 +262,41 @@ public class InfluxService {
 				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
 				+ " WHERE time >= " + String.valueOf(nanoFromTime) + " AND time <= " + String.valueOf(nanoToTime)
 				+ " AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + "='"
-				+ project + "'";
+				+ project + "' GROUP BY "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY);
 
-		List<List<Object>> values = executeQuery(query);
+		List<Series> seriesList = executeMultiSeriesQuery(query);
 
-		if (null == values) {
-			return;
-		}
+		for (Series series : seriesList) {
+			List<List<Object>> values = series.getValues();
+			if (null == values) {
+				continue;
+			}
+			String index = series.getTags()
+					.get(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY));
 
-		// overwrite all cells for the given project
-		BatchPoints batchPoints = BatchPoints
-				.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
-				.retentionPolicy(
-						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
-				.consistency(ConsistencyLevel.ALL).build();
-		for (List<Object> row : values) {
-			LocalDate current = LocalDate.parse((String) row.get(0), DateTimeFormatter.ISO_DATE_TIME);
-			String yearMonth = getYearMonth(current);
-			long nanoTime = getNanoTime(current, false);
-			Builder pointBuilder = Point
-					.measurement(PropertiesService.getInstance()
-							.getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY))
-					.time(nanoTime, TimeUnit.NANOSECONDS)
-					.tag(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY),
-							(String) row.get(1))
-					.tag(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_YEAR_MONTH_KEY),
-							yearMonth)
-					.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_COLOR_KEY), color)
-					.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY),
-							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY))
-					.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_NOTES_KEY), "");
-			batchPoints.point(pointBuilder.build());
-		}
-		if (!values.isEmpty()) {
-			influx.write(batchPoints);
+			LocalDate minDate = LocalDate.now().plusYears(1000);
+			LocalDate maxDate = LocalDate.now().minusYears(1000);
+			for (List<Object> row : values) {
+				LocalDate current = LocalDate.parse((String) row.get(0), DateTimeFormatter.ISO_DATE_TIME);
+				if (current.isBefore(minDate)) {
+					minDate = current;
+				}
+				if (current.isAfter(maxDate)) {
+					maxDate = current;
+				}
+			}
+
+			long nanoMinTime = getNanoTime(minDate, false);
+			long nanoMaxTime = getNanoTime(maxDate, false);
+
+			String deleteQuery = "DELETE FROM "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
+					+ " WHERE " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY)
+					+ "='" + index + "' AND time >= " + String.valueOf(nanoMinTime) + " AND time <= "
+					+ String.valueOf(nanoMaxTime);
+			executeQuery(deleteQuery);
+
 		}
 	}
 
@@ -436,18 +437,20 @@ public class InfluxService {
 
 		boolean first = true;
 		Set<String> projectsToExclude = new HashSet<>(Arrays.asList(PROJECTS_TO_EXCLUDE));
-		projectsToExclude.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY));
+		projectsToExclude
+				.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY));
 		for (String prj : projectsToExclude) {
-			
+
 			if (!first) {
 				query += " OR";
 			} else {
+				query += " (";
 				first = false;
 			}
 			query += " \"" + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY)
 					+ "\"='" + prj + "'";
 		}
-
+		query += " )";
 		List<List<Object>> values = executeQuery(query);
 
 		if (null == values) {
@@ -477,7 +480,8 @@ public class InfluxService {
 
 		while (!current.isAfter(projectAssignment.getTo())) {
 			if (isDayToBeAssigned(projectAssignment, current, datesToExclude)) {
-				ProjectAssignment tmpProjectAssignment = updateProjectAssignmentForProjectRemoval(projectAssignment, current);
+				ProjectAssignment tmpProjectAssignment = updateProjectAssignmentForProjectRemoval(projectAssignment,
+						current);
 				Point point = createProjectAssignmentInfluxPoint(tmpProjectAssignment, current, false, null);
 				batchPoints.point(point);
 			}
@@ -560,21 +564,17 @@ public class InfluxService {
 			ProjectAssignmentBuilder builder = new ProjectAssignmentBuilder();
 			builder.copy(projectAssignment);
 			if (null != holiday) {
-				builder.project(
-						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
+				builder.project(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
 				builder.notes(holiday.getName());
-				builder.color(
-						PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_NA_KEY));
+				builder.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_NA_KEY));
 			} else if (current.getDayOfWeek().equals(DayOfWeek.SATURDAY)
 					|| current.getDayOfWeek().equals(DayOfWeek.SUNDAY)) {
-				builder.project(
-						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
+				builder.project(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
 				builder.notes("");
-				builder.color(
-						PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_WE_KEY));
+				builder.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_WE_KEY));
 			}
 			return builder.build();
-		}else {
+		} else {
 			return projectAssignment;
 		}
 
@@ -640,6 +640,30 @@ public class InfluxService {
 		}
 		Series series = result.getSeries().get(0);
 		return series.getValues();
+	}
+
+	/**
+	 * Executes the given query statement against influx.
+	 * 
+	 * @param queryStr
+	 *            query
+	 * @return result row
+	 */
+	private List<Series> executeMultiSeriesQuery(String queryStr) {
+		Query query = new Query(queryStr,
+				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY));
+
+		QueryResult qResult = influx.query(query);
+		List<Result> results = qResult.getResults();
+
+		if (results.size() != 1) {
+			return null;
+		}
+		Result result = results.get(0);
+		if (null == result.getSeries() || result.getSeries().size() < 1) {
+			return null;
+		}
+		return result.getSeries();
 	}
 
 	/**

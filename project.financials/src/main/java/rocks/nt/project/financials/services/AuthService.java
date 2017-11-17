@@ -34,7 +34,7 @@ public class AuthService {
 
     public static boolean login(String username, String password,
             boolean rememberMe) {
-        if (UserService.isAuthenticUser(username, password)) {
+        if (UserService.getInstance().isAuthenticUser(username, password)) {
             VaadinSession.getCurrent().setAttribute(
                     SESSION_USERNAME, username);
 
@@ -51,7 +51,7 @@ public class AuthService {
         Optional<Cookie> cookie = getRememberMeCookie();
         if (cookie.isPresent()) {
             String id = cookie.get().getValue();
-            UserService.removeRememberedUser(id);
+            UserService.getInstance().removeRememberedUser(id);
             deleteRememberMeCookie();
         }
 
@@ -72,7 +72,7 @@ public class AuthService {
 
         if (rememberMeCookie.isPresent()) {
             String id = rememberMeCookie.get().getValue();
-            String username = UserService.getRememberedUser(id);
+            String username = UserService.getInstance().getRememberedUser(id);
 
             if (username != null) {
                 VaadinSession.getCurrent()
@@ -85,7 +85,7 @@ public class AuthService {
     }
 
     private static void rememberUser(String username) {
-        String id = UserService.rememberUser(username);
+        String id = UserService.getInstance().rememberUser(username);
 
         Cookie cookie = new Cookie(COOKIE_NAME, id);
         cookie.setPath("/");

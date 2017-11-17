@@ -52,7 +52,7 @@ public class HolidayService {
 	 * 
 	 * @return singleton service instance.
 	 */
-	public static HolidayService getInstance() {
+	public synchronized static HolidayService getInstance() {
 		if (instance == null) {
 			instance = new HolidayService();
 		}

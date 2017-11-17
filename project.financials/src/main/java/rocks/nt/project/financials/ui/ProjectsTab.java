@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 import com.vaadin.data.HasValue.ValueChangeListener;
 import com.vaadin.icons.VaadinIcons;
@@ -15,7 +16,6 @@ import com.vaadin.server.ErrorMessage;
 import com.vaadin.server.Page;
 import com.vaadin.server.UserError;
 import com.vaadin.ui.Alignment;
-import com.vaadin.ui.BrowserFrame;
 import com.vaadin.ui.Button;
 import com.vaadin.ui.CheckBox;
 import com.vaadin.ui.CheckBoxGroup;
@@ -118,7 +118,6 @@ public class ProjectsTab {
 	 */
 	private TextField expectedExpensesField;
 
-
 	/**
 	 * Constructor.
 	 * 
@@ -174,9 +173,18 @@ public class ProjectsTab {
 		projectComboBox = new ComboBox<String>("Project");
 		final List<String> projectSelection = InfluxService.getInstance().getKnownProjects();
 		projectSelection.add(0, NO_PROJECT);
+
 		projectComboBox.setItems(projectSelection);
 		projectComboBox.setIcon(VaadinIcons.TOOLBOX);
 		projectComboBox.setSelectedItem(projectSelection.get(0));
+
+		projectComboBox.addSelectionListener(e -> {
+			if (projectComboBox.getValue().equals(NO_PROJECT)) {
+				setEnabledStateForCustomerProjectFields(false);
+			} else {
+				setEnabledStateForCustomerProjectFields(true);
+			}
+		});
 
 		projectComboBox.setNewItemHandler(inputString -> {
 			String trimmedString = inputString.trim();
@@ -193,6 +201,7 @@ public class ProjectsTab {
 		bookingStatusComboBox.setValue(
 				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_REQUEST_KEY));
 		bookingStatusComboBox.setEmptySelectionAllowed(false);
+		bookingStatusComboBox.setTextInputAllowed(false);
 		bookingStatusComboBox.setIcon(VaadinIcons.CLIPBOARD_CHECK);
 		bookingStatusComboBox.setItemIconGenerator(item -> {
 			if (item.equals(
@@ -301,7 +310,7 @@ public class ProjectsTab {
 		// Assign Button
 		assignButton = new Button("Assign Project");
 		assignButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
-		assignButton.addClickListener(event -> assignProject());
+		assignButton.addClickListener(event -> CompletableFuture.runAsync(this::assignProject));
 
 		// Reload Page Checkbox
 		reloadPageCheckBox = new CheckBox("Reload Page");
@@ -330,6 +339,7 @@ public class ProjectsTab {
 
 		projectsTab.addComponent(formLayout);
 		projectsTab.setComponentAlignment(formLayout, Alignment.TOP_CENTER);
+		setEnabledStateForCustomerProjectFields(false);
 	}
 
 	private void setEnabledStateForAssignButton() {
@@ -355,12 +365,19 @@ public class ProjectsTab {
 		String project = projectComboBox.getValue();
 		String bookingStatus = bookingStatusComboBox.getValue();
 		String color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_DEFAULT_KEY);
-
+		String notes = notesField.getValue().trim();
+		if (expenses > 0.0) {
+			if (!notes.isEmpty()) {
+				notes += " - ";
+			}
+			notes += "Expected Daily Expenses: €" + String.valueOf(expenses);
+		}
 		if (project.equals(NO_PROJECT)) {
 			project = PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
 			dailyRate = 0.0;
 			expenses = 0.0;
 			bookingStatus = PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
+			notes = "";
 		} else if (bookingStatus.equals(
 				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_REQUEST_KEY))) {
 			color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_STATUS_REQUEST_KEY);
@@ -370,14 +387,6 @@ public class ProjectsTab {
 		} else if (bookingStatus.equals(
 				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_HARD_KEY))) {
 			color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_STATUS_HARD_KEY);
-		}
-
-		String notes = notesField.getValue().trim();
-		if (expenses > 0.0) {
-			if (!notes.isEmpty()) {
-				notes += " - ";
-			}
-			notes += "Expected Daily Expenses: €" + String.valueOf(expenses);
 		}
 
 		ProjectAssignmentBuilder builder = new ProjectAssignmentBuilder();
@@ -416,6 +425,16 @@ public class ProjectsTab {
 			expensesString = expensesString.substring(1);
 		}
 		return Double.parseDouble(expensesString.trim());
+	}
+
+	/**
+	 * Sets the enabled state.
+	 */
+	private void setEnabledStateForCustomerProjectFields(boolean enabled) {
+		rateField.setEnabled(enabled);
+		expectedExpensesField.setEnabled(enabled);
+		bookingStatusComboBox.setEnabled(enabled);
+		notesField.setEnabled(enabled);
 	}
 
 }
