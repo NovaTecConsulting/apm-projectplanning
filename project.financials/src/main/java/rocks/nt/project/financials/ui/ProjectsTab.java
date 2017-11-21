@@ -10,6 +10,8 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
+import org.w3c.dom.DOMConfiguration;
+
 import com.vaadin.data.HasValue.ValueChangeListener;
 import com.vaadin.icons.VaadinIcons;
 import com.vaadin.server.ErrorMessage;
@@ -24,8 +26,10 @@ import com.vaadin.ui.DateField;
 import com.vaadin.ui.FormLayout;
 import com.vaadin.ui.GridLayout;
 import com.vaadin.ui.HorizontalLayout;
+import com.vaadin.ui.JavaScript;
 import com.vaadin.ui.TabSheet;
 import com.vaadin.ui.TextField;
+import com.vaadin.ui.UI;
 import com.vaadin.ui.VerticalLayout;
 import com.vaadin.ui.themes.ValoTheme;
 
@@ -310,11 +314,11 @@ public class ProjectsTab {
 		// Assign Button
 		assignButton = new Button("Assign Project");
 		assignButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
-		assignButton.addClickListener(event -> CompletableFuture.runAsync(this::assignProject));
+		assignButton.addClickListener(event -> this.assignProject());
 
 		// Reload Page Checkbox
 		reloadPageCheckBox = new CheckBox("Reload Page");
-		reloadPageCheckBox.setValue(false);
+		reloadPageCheckBox.setValue(true);
 		reloadPageCheckBox.addStyleName(ValoTheme.CHECKBOX_SMALL);
 
 		// Notes Field
@@ -357,8 +361,7 @@ public class ProjectsTab {
 	 * Assign project based on input fields.
 	 */
 	private void assignProject() {
-		InfluxService.getInstance().createWeekEndsAndPublicHolidays(employeeComboBox.getValue(),
-				fromDateField.getValue(), toDateField.getValue());
+
 
 		double dailyRate = getDailyRate();
 		double expenses = getExpenses();
@@ -394,11 +397,25 @@ public class ProjectsTab {
 				.from(fromDateField.getValue()).to(toDateField.getValue()).daysOfWeek(checkBoxGroup.getValue())
 				.skipHolidays(skipPublicHolidaysCheckBox.getValue()).skipEvents(skipOtherEventsCheckBox.getValue())
 				.color(color).notes(notes).expenses(expenses);
-
 		InfluxService.getInstance().assignProjects(builder.build());
+		
+
+		
+		CompletableFuture.runAsync(new  Runnable() {
+			
+			@Override
+			public void run() {
+				InfluxService.getInstance().createWeekEndsAndPublicHolidays(employeeComboBox.getValue(),
+						fromDateField.getValue(), toDateField.getValue());
+			}});
+		
+
+		
 		if (reloadPageCheckBox.getValue()) {
-			Page.getCurrent().reload();
+			Page.getCurrent().getJavaScript().execute("var grafanaFrame = document.getElementsByClassName(\"v-browserframe\")[0].children[0]; grafanaFrame.src = grafanaFrame.src;");
 		}
+
+		
 	}
 
 	/**

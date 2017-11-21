@@ -219,12 +219,13 @@ public class EventTab {
 		// Assign Button
 		assignButton = new Button("Create / Update Event");
 		assignButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
-		assignButton.addClickListener(event -> CompletableFuture.runAsync(this::assignEvent));
+		assignButton.addClickListener(event -> this.assignEvent());
 
 		// Reload Page Checkbox
 		Set<String> reloadCheckItem = new HashSet<String>();
 		reloadCheckItem.add("Reload Page");
 		reloadPageCheckBox = new CheckBoxGroup<String>("", reloadCheckItem);
+		reloadPageCheckBox.setValue(reloadCheckItem);
 
 		// Notes Field
 		notesField = new TextField("Notes");
@@ -289,7 +290,7 @@ public class EventTab {
 		InfluxService.getInstance().assignProjects(projectAssignments);
 
 		if (!reloadPageCheckBox.getValue().isEmpty()) {
-			Page.getCurrent().reload();
+			Page.getCurrent().getJavaScript().execute("var grafanaFrame = document.getElementsByClassName(\"v-browserframe\")[0].children[0]; grafanaFrame.src = grafanaFrame.src;");
 		}
 	}
 

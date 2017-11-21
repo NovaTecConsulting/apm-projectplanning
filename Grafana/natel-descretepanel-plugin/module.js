@@ -837,32 +837,48 @@ System.register(['app/core/config', './canvas-metric', './points', 'lodash', 'mo
           }
         }, {
           key: 'onMouseClicked',
-          value: function onMouseClicked(where) {
-			  var hover = null;  
- //window.alert("where: " + JSON.stringify(where));
+          value: function onMouseClicked(evt, where) {
+		  if (this.panel.useColorSeries) {
 
-			  if (this.isTimeline) {
-			    var j = Math.floor(where.y / this.panel.rowHeight);
-			   
+			var hover = null; 
+				
+			if (this.isTimeline && evt.ctrlKey && evt.shiftKey) {
+				var rect = this.wrap.getBoundingClientRect();
+				var x = where.x;
+				var y = where.y;
+				var j = Math.floor(y / this.panel.rowHeight);
 				if (j < 0) {
 					j = 0;
 				}
 				if (j >= this.data.length) {
 					j = this.data.length - 1;
 				}
+				var employee = this.data[j].name;
 				hover = this.data[j].changes[0];
-				
 				for (var i = 0; i < this.data[j].changes.length; i++) {
-				  if (this.data[j].changes[i].x > where.x) {
+				  if (this.data[j].changes[i].x > x) {
 					break;
 				  }
 				  hover = this.data[j].changes[i];
 				}
-				
-				this.showCustomTooltip(where.x, where.y, hover);
+					
+				var jsonRequest = '{"employee":"'+employee+'", "project":"'+hover.val+'", "start":'+hover.start+', "duration":'+hover.ms+'}';
 
-				this.onRender(); // refresh the view
-			  }
+				var xhttp = new XMLHttpRequest();
+				var _this = this;
+				xhttp.onreadystatechange = function () {
+					if (xhttp.readyState == XMLHttpRequest.DONE) {
+						_this.$scope.$emit('refresh');
+					}
+				}
+				xhttp.open("POST", "http://appfin.rocks/rest/projects/delete/", true);
+					
+				xhttp.setRequestHeader("Content-Type", "application/json");
+				xhttp.setRequestHeader("Accept", "application/json");
+				
+				xhttp.send(jsonRequest);
+			}
+		}
           }
         }, {
           key: 'onMouseSelectedRange',

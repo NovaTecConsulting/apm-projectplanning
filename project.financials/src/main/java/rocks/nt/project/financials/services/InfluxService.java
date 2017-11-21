@@ -2,14 +2,17 @@ package rocks.nt.project.financials.services;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -24,11 +27,15 @@ import org.influxdb.dto.Query;
 import org.influxdb.dto.QueryResult;
 import org.influxdb.dto.QueryResult.Result;
 import org.influxdb.dto.QueryResult.Series;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import rocks.nt.project.financials.data.Holiday;
 import rocks.nt.project.financials.data.ProjectAssignment;
 import rocks.nt.project.financials.data.ProjectAssignment.EventBuilder;
 import rocks.nt.project.financials.data.ProjectAssignment.ProjectAssignmentBuilder;
+import rocks.nt.project.financials.rest.Api;
+import rocks.nt.project.financials.rest.ProjectDeleteRequest;
 
 /**
  * Influx service.
@@ -38,10 +45,12 @@ import rocks.nt.project.financials.data.ProjectAssignment.ProjectAssignmentBuild
  */
 public class InfluxService {
 
+	private static final Logger LOGGER = LoggerFactory.getLogger(Api.class);
+
 	/**
 	 * Special project markers representing events that are not customer projects.
 	 */
-	private static String[] PROJECTS_TO_EXCLUDE = {
+	public static String[] PROJECTS_TO_EXCLUDE = {
 			PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY),
 			PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY),
 			PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY),
@@ -67,7 +76,7 @@ public class InfluxService {
 	/**
 	 * Range where to generate weekends.
 	 */
-	private static final int EPSILON_WE_MONTHS = 6;
+	private static final int EPSILON_WE_MONTHS = 12;
 
 	/**
 	 * Time of day where to place weekend and public holiday events into influxDB.
@@ -97,12 +106,30 @@ public class InfluxService {
 	private InfluxDB influx;
 
 	/**
+	 * Last known entry in the calendar.
+	 */
+	private LocalDate lastCalendarEntry;
+
+	private final Map<String, LocalDate> lastWeekendAndHolidayEntryMap = new HashMap<>();
+
+	/**
 	 * Constructor.
 	 */
 	private InfluxService() {
 		influx = InfluxDBFactory.connect(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_URL_KEY),
 				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_USER_KEY),
 				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_PW_KEY));
+
+		lastCalendarEntry = getLastCalendarEntry();
+
+		for (String employee : getKnownEmployees()) {
+			LocalDate date = getLastWeekEndAndHolidayEntryForEmployee(employee);
+			if (date == null) {
+				date = LocalDate.now();
+			}
+			lastWeekendAndHolidayEntryMap.put(employee, date);
+		}
+
 	}
 
 	/**
@@ -238,6 +265,60 @@ public class InfluxService {
 		influx.write(batchPoints);
 	}
 
+	public void deleteProject(ProjectDeleteRequest request) {
+		LocalDate fromDate = dateFromMillis(request.getStart());
+		LocalDate toDate = dateFromMillis(request.getStart() + request.getDuration()).minusDays(1);
+
+		LOGGER.info("project to delete: " + request.getProject() + " for employee: " + request.getEmployee() + " from: "
+				+ fromDate.toString() + " to: " + toDate.toString());
+		String query = "SELECT DISTINCT "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY)
+				+ " WHERE time >= " + getNanoTime(fromDate, false) + " AND time <= " + getNanoTime(toDate, false)
+				+ " AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY) + "='"
+				+ request.getEmployee() + "'";
+
+		List<List<Object>> values = executeQuery(query);
+		if (values == null || values.isEmpty() || values.get(0) == null || values.get(0).isEmpty()
+				|| values.get(0).size() < 2 || values.get(0).get(1) == null) {
+			return;
+		}
+
+		Set<String> projects = values.stream().map(row -> (String) row.get(1)).collect(Collectors.toSet());
+		projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
+		projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY));
+		projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
+		if (projects.size() != 1) {
+			return;
+		}
+
+		String projectInDB = projects.stream().findFirst().get();
+		if (!projectInDB.equals(request.getProject())) {
+			return;
+		}
+
+		String naProject = PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
+		double dailyRate = 0.0;
+		double expenses = 0.0;
+		String bookingStatus = PropertiesService.getInstance()
+				.getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
+		String notes = "";
+		String color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_DEFAULT_KEY);
+
+		ProjectAssignmentBuilder builder = new ProjectAssignmentBuilder();
+		builder.employee(request.getEmployee()).project(naProject).status(bookingStatus).rate(dailyRate).from(fromDate)
+				.to(toDate).daysOfWeek(new HashSet<>(Arrays.asList(DayOfWeek.values()))).skipHolidays(false)
+				.skipEvents(false).color(color).notes(notes).expenses(expenses);
+
+		assignProjects(builder.build());
+	}
+
+	public void deleteUnassignedProject(ProjectDeleteRequest request) {
+		LocalDate fromDate = dateFromMillis(request.getStart());
+		LocalDate toDate = dateFromMillis(request.getStart() + request.getDuration()).minusDays(1);
+		deleteUnassignedProject(request.getProject(), fromDate, toDate, request.getEmployee());
+	}
+
 	/**
 	 * Overwrites the given project with an empty entry.
 	 * 
@@ -247,23 +328,24 @@ public class InfluxService {
 	 *            from date
 	 * @param to
 	 *            to date
-	 * @param color
-	 *            color to use
 	 */
-	public void deleteUnassignedProject(String project, LocalDate from, LocalDate to, String color) {
+	public void deleteUnassignedProject(String project, LocalDate from, LocalDate to, String idx) {
 
 		long nanoFromTime = getNanoTime(from, false);
 		long nanoToTime = getNanoTime(to, false);
 
 		// retrieve the existing entry for the given project
+		String idxQuery = (idx == null) ? ""
+				: (" AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY) + "='"
+						+ idx + "'");
 		String query = "SELECT time,"
 				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY) + ","
 				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
 				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
 				+ " WHERE time >= " + String.valueOf(nanoFromTime) + " AND time <= " + String.valueOf(nanoToTime)
-				+ " AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + "='"
-				+ project + "' GROUP BY "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY);
+				+ idxQuery + " AND "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + "='" + project
+				+ "' GROUP BY " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY);
 
 		List<Series> seriesList = executeMultiSeriesQuery(query);
 
@@ -317,34 +399,83 @@ public class InfluxService {
 						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
 				.consistency(ConsistencyLevel.ALL).build();
 		LocalDate current = from.minusMonths(EPSILON_WE_MONTHS);
+		LocalDate lastWeekEndEntry = lastWeekendAndHolidayEntryMap.get(employee);
+		LocalDate tmpLastCalendarEntry = lastCalendarEntry;
 		while (!current.isAfter(to.plusMonths(EPSILON_WE_MONTHS))) {
-			EventBuilder eventBuilder = new EventBuilder();
-			eventBuilder.employee(employee);
-			boolean workingDay = false;
+			if (current.isAfter(lastWeekEndEntry)) {
 
-			if (null != getPublicHoliday(current)) {
-				eventBuilder
-						.event(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
-				eventBuilder.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_NA_KEY));
-				eventBuilder.notes(getPublicHoliday(current).getName());
-			} else if (current.getDayOfWeek().equals(DayOfWeek.SATURDAY)
-					|| current.getDayOfWeek().equals(DayOfWeek.SUNDAY)) {
-				eventBuilder
-						.event(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
-				eventBuilder.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_WE_KEY));
-			} else {
-				workingDay = true;
+				EventBuilder eventBuilder = new EventBuilder();
+				eventBuilder.employee(employee);
+				boolean workingDay = false;
+
+				if (null != getPublicHoliday(current)) {
+					eventBuilder.event(
+							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
+					eventBuilder
+							.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_NA_KEY));
+					eventBuilder.notes(getPublicHoliday(current).getName());
+				} else if (current.getDayOfWeek().equals(DayOfWeek.SATURDAY)
+						|| current.getDayOfWeek().equals(DayOfWeek.SUNDAY)) {
+					eventBuilder.event(
+							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
+					eventBuilder
+							.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_WE_KEY));
+				} else {
+					workingDay = true;
+				}
+
+				Point point = createProjectAssignmentInfluxPoint(eventBuilder.build(), current, true, workingDay);
+				batchPoints.point(point);
+				lastWeekEndEntry = current;
 			}
-
-			Point point = createProjectAssignmentInfluxPoint(eventBuilder.build(), current, true, workingDay);
-			batchPoints.point(point);
-
-			createCalendarEntry(batchPoints, current);
+			if (current.isAfter(tmpLastCalendarEntry)) {
+				createCalendarEntry(batchPoints, current);
+				tmpLastCalendarEntry = current;
+			}
 
 			current = current.plusDays(1);
 		}
 
 		influx.write(batchPoints);
+
+		lastWeekendAndHolidayEntryMap.put(employee, lastWeekEndEntry);
+		lastCalendarEntry = tmpLastCalendarEntry;
+	}
+
+	/**
+	 * Retrieves the date of the last calendar entry in influxDB.
+	 * 
+	 * @return date
+	 */
+	private LocalDate getLastCalendarEntry() {
+		String query = "SELECT LAST(value) FROM calendar";
+		List<List<Object>> values = executeQuery(query);
+		if (null == values || values.isEmpty()) {
+			return LocalDate.now().minusMonths(EPSILON_WE_MONTHS);
+		}
+		return LocalDate.parse((String) values.get(0).get(0), DateTimeFormatter.ISO_DATE_TIME);
+	}
+
+	/**
+	 * Retrieves the date of the last calendar entry in influxDB.
+	 * 
+	 * @return date
+	 */
+	private LocalDate getLastWeekEndAndHolidayEntryForEmployee(String employee) {
+		String query = "SELECT LAST("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + ") FROM "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY) + " WHERE "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY) + " = '"
+				+ employee + "' AND ("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " = '"
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY) + "' OR "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " = '"
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY) + "')";
+		List<List<Object>> values = executeQuery(query);
+		if (null == values || values.isEmpty()) {
+			return LocalDate.now();
+		}
+		return LocalDate.parse((String) values.get(0).get(0), DateTimeFormatter.ISO_DATE_TIME);
 	}
 
 	/**
@@ -357,14 +488,19 @@ public class InfluxService {
 	 */
 	private void createCalendarEntry(BatchPoints batchPoints, LocalDate current) {
 		Calendar date = Calendar.getInstance();
+		date.setFirstDayOfWeek(Calendar.MONDAY);
 		date.set(current.getYear(), current.getMonthValue() - 1, current.getDayOfMonth(), WEEKEND_HOLIDAY_HOUR, 0, 0);
 		long nanoTime = getNanoTime(current, true);
 		Point pointM = Point.measurement("calendar").time(nanoTime, TimeUnit.NANOSECONDS).tag("type", "m")
 				.addField("value", date.getDisplayName(Calendar.MONTH, Calendar.LONG, Locale.GERMANY)).build();
 		Point pointD = Point.measurement("calendar").time(nanoTime, TimeUnit.NANOSECONDS).tag("type", "d")
 				.addField("value", String.valueOf(date.get(Calendar.DAY_OF_MONTH))).build();
+		Point pointW = Point.measurement("calendar").time(nanoTime, TimeUnit.NANOSECONDS).tag("type", "w")
+				.addField("value", String.valueOf(date.get(Calendar.WEEK_OF_YEAR))).build();
+
 		batchPoints.point(pointM);
 		batchPoints.point(pointD);
+		batchPoints.point(pointW);
 	}
 
 	/**
@@ -595,6 +731,19 @@ public class InfluxService {
 				weekendOrPublicHoliday ? WEEKEND_HOLIDAY_HOUR : PROJECT_HOUR, 0, 0);
 		long nanoTime = (date.getTimeInMillis() / MILLI) * NANO;
 		return nanoTime;
+	}
+
+	/**
+	 * Retrieve date from the given epoch milli seconds.
+	 * 
+	 * @param milliseconds
+	 *            milliseconds
+	 * @return date
+	 */
+	private LocalDate dateFromMillis(long milliseconds) {
+		Calendar date = Calendar.getInstance();
+		date.setTimeInMillis(milliseconds);
+		return date.getTime().toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
 	}
 
 	/**

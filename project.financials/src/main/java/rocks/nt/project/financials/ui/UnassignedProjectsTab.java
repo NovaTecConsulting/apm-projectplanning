@@ -156,12 +156,12 @@ public class UnassignedProjectsTab {
 		// Assign Button
 		createButton = new Button("Assign Project");
 		createButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
-		createButton.addClickListener(event -> CompletableFuture.runAsync(this::createUnassignedProject));
+		createButton.addClickListener(event -> this.createUnassignedProject());
 
 		// Assign Button
 		deleteButton = new Button("Delete");
 		deleteButton.addStyleName(ValoTheme.BUTTON_DANGER);
-		deleteButton.addClickListener(event -> CompletableFuture.runAsync(this::deleteUnassignedProject));
+		deleteButton.addClickListener(event -> this.deleteUnassignedProject());
 		projectComboBox.addSelectionListener(e -> {
 			setEnabledStateForDeleteButton();
 		});
@@ -170,7 +170,7 @@ public class UnassignedProjectsTab {
 		Set<String> reloadCheckItem = new HashSet<String>();
 		reloadCheckItem.add("Reload Page");
 		reloadPageCheckBox = new CheckBoxGroup<String>("", reloadCheckItem);
-
+		reloadPageCheckBox.setValue(reloadCheckItem);
 		// Notes Field
 		notesField = new TextField("Notes");
 		notesField.setSizeFull();
@@ -214,14 +214,14 @@ public class UnassignedProjectsTab {
 				notesField.getValue().trim(), color);
 
 		if (!reloadPageCheckBox.getValue().isEmpty()) {
-			Page.getCurrent().reload();
+			Page.getCurrent().getJavaScript().execute("var grafanaFrame = document.getElementsByClassName(\"v-browserframe\")[0].children[0]; grafanaFrame.src = grafanaFrame.src;");
 		} else {
 			knownProjects.clear();
 			knownProjects.addAll(InfluxService.getInstance().getKnownUnassignedProjects());
 			setEnabledStateForDeleteButton();
 		}
 	}
-	
+
 	/**
 	 * 
 	 */
@@ -238,13 +238,12 @@ public class UnassignedProjectsTab {
 	 */
 	private void deleteUnassignedProject() {
 		String project = projectComboBox.getValue();
-		String color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_DEFAULT_KEY);
 
 		InfluxService.getInstance().deleteUnassignedProject(project, fromDateField.getValue(), toDateField.getValue(),
-				color);
+				null);
 
 		if (!reloadPageCheckBox.getValue().isEmpty()) {
-			Page.getCurrent().reload();
+			Page.getCurrent().getJavaScript().execute("var grafanaFrame = document.getElementsByClassName(\"v-browserframe\")[0].children[0]; grafanaFrame.src = grafanaFrame.src;");
 		}
 	}
 

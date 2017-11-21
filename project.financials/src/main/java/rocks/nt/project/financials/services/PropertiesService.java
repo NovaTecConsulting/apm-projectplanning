@@ -12,6 +12,7 @@ import com.vaadin.server.VaadinService;
 
 /**
  * Properties service.
+ * 
  * @author awe
  *
  */
@@ -61,7 +62,6 @@ public class PropertiesService {
 
 	private static final String PROPERTY_PATH = "/WEB-INF/properties.conf";
 
-	
 	private static PropertiesService instance;
 
 	public synchronized static PropertiesService getInstance() {
@@ -74,8 +74,16 @@ public class PropertiesService {
 	private final Properties defaultProperties = new Properties();
 	private final Properties userProperties = new Properties();
 
+	public static void main(String[] args) {
+		PropertiesService.getInstance();
+	}
+
 	private PropertiesService() {
-		String basepath = VaadinService.getCurrent().getBaseDirectory().getAbsolutePath();
+		String basepath = ".";
+		if (null != VaadinService.getCurrent()) {
+			basepath = VaadinService.getCurrent().getBaseDirectory().getAbsolutePath();
+		}
+
 		try {
 			defaultProperties.load(new FileReader(basepath + PROPERTY_PATH));
 		} catch (IOException e) {
@@ -85,8 +93,8 @@ public class PropertiesService {
 		loadUserProperties();
 		LOGGER.info("Using following properties:");
 		LOGGER.info("-------------------------------------------------------");
-		for(Object keyObj : defaultProperties.keySet()){
-			String key = (String)keyObj;
+		for (Object keyObj : defaultProperties.keySet()) {
+			String key = (String) keyObj;
 			LOGGER.info(key + " = " + getProperty(key));
 		}
 		LOGGER.info("-------------------------------------------------------");

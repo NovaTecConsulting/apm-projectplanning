@@ -2,9 +2,14 @@ package rocks.nt.project.financials.ui;
 
 import java.io.File;
 
+import javax.jws.soap.InitParam;
 import javax.servlet.annotation.HttpConstraint;
 import javax.servlet.annotation.ServletSecurity;
+import javax.servlet.annotation.WebInitParam;
 import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+
+import org.glassfish.jersey.servlet.ServletContainer;
 
 import com.vaadin.annotations.PreserveOnRefresh;
 import com.vaadin.annotations.Theme;
@@ -15,11 +20,13 @@ import com.vaadin.server.Page;
 import com.vaadin.server.VaadinRequest;
 import com.vaadin.server.VaadinService;
 import com.vaadin.server.VaadinServlet;
+import com.vaadin.shared.ui.ContentMode;
 import com.vaadin.ui.AbsoluteLayout;
 import com.vaadin.ui.Alignment;
 import com.vaadin.ui.BrowserFrame;
 import com.vaadin.ui.Button;
 import com.vaadin.ui.Image;
+import com.vaadin.ui.Label;
 import com.vaadin.ui.TabSheet;
 import com.vaadin.ui.UI;
 import com.vaadin.ui.VerticalLayout;
@@ -52,7 +59,7 @@ public class ProjectFinancialsUI extends UI {
 	private static final int GRAFANA_MARGIN_RIGHT = 50;
 
 	private static final int GRAFANA_FRAME_HEIGHT = 3000;
-
+	
 	@Override
 	protected void init(VaadinRequest vaadinRequest) {
 		if (!AuthService.isAuthenticated()) {
@@ -89,7 +96,6 @@ public class ProjectFinancialsUI extends UI {
 		browser.setWidth(
 				String.valueOf(UI.getCurrent().getPage().getBrowserWindowWidth() - GRAFANA_MARGIN_RIGHT) + "px");
 		browser.setHeight(String.valueOf(GRAFANA_FRAME_HEIGHT) + "px");
-
 		final TabSheet tabSheet = new TabSheet();
 		vLayout.addComponent(tabSheet);
 		vLayout.setComponentAlignment(tabSheet, Alignment.TOP_CENTER);
@@ -119,6 +125,9 @@ public class ProjectFinancialsUI extends UI {
 		logoutButton.addStyleName(ValoTheme.BUTTON_BORDERLESS_COLORED);
 		rootLayout.addComponent(logoutButton, "right: 40px; top: 100px;");
 		
+		// Hint Label
+		Label hintLabel = new Label("Entries can be deleted with <b>Ctrl</b> + <b>Shift</b> + <b>Click</b> on element in the dashboard!", ContentMode.HTML);
+		rootLayout.addComponent(hintLabel, "right: 40px; top: 450px;");
 		setContent(rootLayout);
 	}
 
@@ -128,7 +137,7 @@ public class ProjectFinancialsUI extends UI {
 		setContent(vLayout);
 	}
 
-	@WebServlet(urlPatterns = "/*", name = "ProjectFinancialsUIServlet", asyncSupported = true)
+	@WebServlet(value = {"/app/*", "/VAADIN/*"}, name = "ProjectFinancialsUIServlet", asyncSupported = true)
 	@VaadinServletConfiguration(ui = ProjectFinancialsUI.class, productionMode = true)
 	@ServletSecurity(value=@HttpConstraint(transportGuarantee=ServletSecurity.TransportGuarantee.CONFIDENTIAL))
 	public static class ProjectFinancialsUIServlet extends VaadinServlet {
@@ -138,5 +147,4 @@ public class ProjectFinancialsUI extends UI {
 		 */
 		private static final long serialVersionUID = 8488639570234889259L;
 	}
-
 }
