@@ -30,7 +30,10 @@ import org.influxdb.dto.QueryResult.Series;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import io.opentracing.ActiveSpan;
 import rocks.nt.project.financials.data.Holiday;
+import rocks.nt.project.financials.data.MonthReportDataPoint;
+import rocks.nt.project.financials.data.MonthReportDataPoint.Type;
 import rocks.nt.project.financials.data.ProjectAssignment;
 import rocks.nt.project.financials.data.ProjectAssignment.EventBuilder;
 import rocks.nt.project.financials.data.ProjectAssignment.ProjectAssignmentBuilder;
@@ -138,20 +141,30 @@ public class InfluxService {
 	 * @return A sorted list of employees.
 	 */
 	public List<String> getKnownEmployees() {
-		String query = "SHOW TAG VALUES FROM \""
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY)
-				+ "\" WITH KEY = \""
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY) + "\"";
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".getKnownEmployees";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
 
-		List<List<Object>> values = executeQuery(query);
+		try {
+			// Logic
+			String query = "SHOW TAG VALUES FROM \""
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY)
+					+ "\" WITH KEY = \""
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY) + "\"";
 
-		if (null == values) {
-			return new ArrayList<String>();
+			List<List<Object>> values = executeQuery(query);
+
+			if (null == values) {
+				return new ArrayList<String>();
+			}
+
+			List<String> employees = values.stream().map(p -> (String) p.get(1)).collect(Collectors.toList());
+			Collections.sort(employees);
+			return employees;
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-
-		List<String> employees = values.stream().map(p -> (String) p.get(1)).collect(Collectors.toList());
-		Collections.sort(employees);
-		return employees;
 	}
 
 	/**
@@ -160,22 +173,32 @@ public class InfluxService {
 	 * @return A sorted list of known customer projects.
 	 */
 	public List<String> getKnownProjects() {
-		String query = "SELECT DISTINCT "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY);
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".getKnownProjects";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
 
-		List<List<Object>> values = executeQuery(query);
+		try {
+			// Logic
+			String query = "SELECT DISTINCT "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY);
 
-		if (null == values) {
-			return new ArrayList<String>();
+			List<List<Object>> values = executeQuery(query);
+
+			if (null == values) {
+				return new ArrayList<String>();
+			}
+
+			Set<String> toExclude = new HashSet<String>(Arrays.asList(PROJECTS_TO_EXCLUDE));
+
+			List<String> projects = values.stream().map(p -> (String) p.get(1)).filter(p -> !toExclude.contains(p))
+					.collect(Collectors.toList());
+			Collections.sort(projects);
+			return projects;
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-
-		Set<String> toExclude = new HashSet<String>(Arrays.asList(PROJECTS_TO_EXCLUDE));
-
-		List<String> projects = values.stream().map(p -> (String) p.get(1)).filter(p -> !toExclude.contains(p))
-				.collect(Collectors.toList());
-		Collections.sort(projects);
-		return projects;
 	}
 
 	/**
@@ -184,22 +207,30 @@ public class InfluxService {
 	 * @return A sorted list of known unassigned customer projects.
 	 */
 	public List<String> getKnownUnassignedProjects() {
-		String query = "SELECT DISTINCT "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY);
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".getKnownUnassignedProjects";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
+		try {
+			// Logic
+			String query = "SELECT DISTINCT "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY);
 
-		List<List<Object>> values = executeQuery(query);
+			List<List<Object>> values = executeQuery(query);
 
-		if (null == values) {
-			return new ArrayList<String>();
+			if (null == values) {
+				return new ArrayList<String>();
+			}
+
+			List<String> projects = values.stream().map(p -> (String) p.get(1)).filter(p -> !p.equals(
+					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY)))
+					.collect(Collectors.toList());
+			Collections.sort(projects);
+			return projects;
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-
-		List<String> projects = values.stream().map(p -> (String) p.get(1))
-				.filter(p -> !p.equals(
-						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY)))
-				.collect(Collectors.toList());
-		Collections.sort(projects);
-		return projects;
 	}
 
 	/**
@@ -209,15 +240,24 @@ public class InfluxService {
 	 *            an array of project assignments.
 	 */
 	public void assignProjects(ProjectAssignment... projectAssignments) {
-		BatchPoints batchPoints = BatchPoints
-				.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
-				.retentionPolicy(
-						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
-				.consistency(ConsistencyLevel.ALL).build();
-		for (ProjectAssignment projectAssignment : projectAssignments) {
-			assignProject(projectAssignment, batchPoints);
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".assignProjects";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
+		try {
+			// Logic
+			BatchPoints batchPoints = BatchPoints
+					.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
+					.retentionPolicy(
+							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
+					.consistency(ConsistencyLevel.ALL).build();
+			for (ProjectAssignment projectAssignment : projectAssignments) {
+				assignProject(projectAssignment, batchPoints);
+			}
+			writeToInflux(batchPoints);
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-		influx.write(batchPoints);
 	}
 
 	/**
@@ -235,84 +275,125 @@ public class InfluxService {
 	 *            color string in hex representation
 	 */
 	public void createUnassignedProject(String project, LocalDate from, LocalDate to, String notes, String color) {
-		BatchPoints batchPoints = BatchPoints
-				.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
-				.retentionPolicy(
-						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
-				.consistency(ConsistencyLevel.ALL).build();
-		LocalDate current = from;
-		int index = retrieveAvailableIndex(from, to);
-		while (!current.isAfter(to)) {
-			String yearMonth = getYearMonth(current);
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".createUnassignedProject";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
+		s_this.setTag(JaegerUtil.T_PROJECT, project);
+		s_this.setTag(JaegerUtil.T_FROM, from.toString());
+		s_this.setTag(JaegerUtil.T_TO, to.toString());
+		try {
+			// Logic
+			BatchPoints batchPoints = BatchPoints
+					.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
+					.retentionPolicy(
+							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
+					.consistency(ConsistencyLevel.ALL).build();
+			LocalDate current = from;
+			int index = retrieveAvailableIndex(from, to);
+			while (!current.isAfter(to)) {
+				String yearMonth = getYearMonth(current);
 
-			long nanoTime = getNanoTime(current, false);
-			Builder pointBuilder = Point
-					.measurement(PropertiesService.getInstance()
-							.getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY))
-					.time(nanoTime, TimeUnit.NANOSECONDS)
-					.tag(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY),
-							String.valueOf(index))
-					.tag(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_YEAR_MONTH_KEY),
-							yearMonth)
-					.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_COLOR_KEY), color)
-					.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY),
-							project)
-					.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_NOTES_KEY), notes);
-			batchPoints.point(pointBuilder.build());
-			current = current.plusDays(1);
+				long nanoTime = getNanoTime(current, false);
+				Builder pointBuilder = Point
+						.measurement(PropertiesService.getInstance()
+								.getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY))
+						.time(nanoTime, TimeUnit.NANOSECONDS)
+						.tag(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY),
+								String.valueOf(index))
+						.tag(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_YEAR_MONTH_KEY),
+								yearMonth)
+						.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_COLOR_KEY),
+								color)
+						.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY),
+								project)
+						.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_NOTES_KEY),
+								notes);
+				batchPoints.point(pointBuilder.build());
+				current = current.plusDays(1);
+			}
+
+			writeToInflux(batchPoints);
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-
-		influx.write(batchPoints);
 	}
 
+	/**
+	 * Deletes Project for the given deletion request.
+	 * 
+	 * @param request
+	 *            deletion request
+	 */
 	public void deleteProject(ProjectDeleteRequest request) {
-		LocalDate fromDate = dateFromMillis(request.getStart());
-		LocalDate toDate = dateFromMillis(request.getStart() + request.getDuration()).minusDays(1);
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".deleteProject";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
+		s_this.setTag(JaegerUtil.T_EMPLOYEE, request.getEmployee());
+		s_this.setTag(JaegerUtil.T_PROJECT, request.getProject());
+		s_this.setTag(JaegerUtil.T_FROM, dateFromMillis(request.getStart()).toString());
+		s_this.setTag(JaegerUtil.T_TO, dateFromMillis(request.getStart() + request.getDuration()).toString());
+		try {
+			// Logic
+			LocalDate fromDate = dateFromMillis(request.getStart());
+			LocalDate toDate = dateFromMillis(request.getStart() + request.getDuration()).minusDays(1);
 
-		LOGGER.info("project to delete: " + request.getProject() + " for employee: " + request.getEmployee() + " from: "
-				+ fromDate.toString() + " to: " + toDate.toString());
-		String query = "SELECT DISTINCT "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY)
-				+ " WHERE time >= " + getNanoTime(fromDate, false) + " AND time <= " + getNanoTime(toDate, false)
-				+ " AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY) + "='"
-				+ request.getEmployee() + "'";
+			LOGGER.info("project to delete: " + request.getProject() + " for employee: " + request.getEmployee()
+					+ " from: " + fromDate.toString() + " to: " + toDate.toString());
+			String query = "SELECT DISTINCT "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY)
+					+ " WHERE time >= " + getNanoTime(fromDate, false) + " AND time <= " + getNanoTime(toDate, false)
+					+ " AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY)
+					+ "='" + request.getEmployee() + "'";
 
-		List<List<Object>> values = executeQuery(query);
-		if (values == null || values.isEmpty() || values.get(0) == null || values.get(0).isEmpty()
-				|| values.get(0).size() < 2 || values.get(0).get(1) == null) {
-			return;
+			List<List<Object>> values = executeQuery(query);
+			if (values == null || values.isEmpty() || values.get(0) == null || values.get(0).isEmpty()
+					|| values.get(0).size() < 2 || values.get(0).get(1) == null) {
+				return;
+			}
+
+			Set<String> projects = values.stream().map(row -> (String) row.get(1)).collect(Collectors.toSet());
+			projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
+			projects.remove(
+					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY));
+			projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
+			if (projects.size() != 1) {
+				return;
+			}
+
+			String projectInDB = projects.stream().findFirst().get();
+			if (!projectInDB.equals(request.getProject())) {
+				return;
+			}
+
+			String naProject = PropertiesService.getInstance()
+					.getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
+			double dailyRate = 0.0;
+			double expenses = 0.0;
+			String bookingStatus = PropertiesService.getInstance()
+					.getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
+			String notes = "";
+			String color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_DEFAULT_KEY);
+
+			ProjectAssignmentBuilder builder = new ProjectAssignmentBuilder();
+			builder.employee(request.getEmployee()).project(naProject).status(bookingStatus).rate(dailyRate)
+					.from(fromDate).to(toDate).daysOfWeek(new HashSet<>(Arrays.asList(DayOfWeek.values())))
+					.skipHolidays(false).skipEvents(false).color(color).notes(notes).expenses(expenses);
+
+			assignProjects(builder.build());
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-
-		Set<String> projects = values.stream().map(row -> (String) row.get(1)).collect(Collectors.toSet());
-		projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
-		projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY));
-		projects.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
-		if (projects.size() != 1) {
-			return;
-		}
-
-		String projectInDB = projects.stream().findFirst().get();
-		if (!projectInDB.equals(request.getProject())) {
-			return;
-		}
-
-		String naProject = PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
-		double dailyRate = 0.0;
-		double expenses = 0.0;
-		String bookingStatus = PropertiesService.getInstance()
-				.getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY);
-		String notes = "";
-		String color = PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_DEFAULT_KEY);
-
-		ProjectAssignmentBuilder builder = new ProjectAssignmentBuilder();
-		builder.employee(request.getEmployee()).project(naProject).status(bookingStatus).rate(dailyRate).from(fromDate)
-				.to(toDate).daysOfWeek(new HashSet<>(Arrays.asList(DayOfWeek.values()))).skipHolidays(false)
-				.skipEvents(false).color(color).notes(notes).expenses(expenses);
-
-		assignProjects(builder.build());
 	}
 
+	/**
+	 * Delete unassigned project.
+	 * 
+	 * @param request
+	 *            deletion request
+	 */
 	public void deleteUnassignedProject(ProjectDeleteRequest request) {
 		LocalDate fromDate = dateFromMillis(request.getStart());
 		LocalDate toDate = dateFromMillis(request.getStart() + request.getDuration()).minusDays(1);
@@ -330,55 +411,69 @@ public class InfluxService {
 	 *            to date
 	 */
 	public void deleteUnassignedProject(String project, LocalDate from, LocalDate to, String idx) {
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".deleteUnassignedProject";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
+		s_this.setTag(JaegerUtil.T_PROJECT, project);
+		s_this.setTag(JaegerUtil.T_INDEX, idx);
+		s_this.setTag(JaegerUtil.T_FROM, from.toString());
+		s_this.setTag(JaegerUtil.T_TO, to.toString());
+		try {
+			// Logic
+			long nanoFromTime = getNanoTime(from, false);
+			long nanoToTime = getNanoTime(to, false);
 
-		long nanoFromTime = getNanoTime(from, false);
-		long nanoToTime = getNanoTime(to, false);
-
-		// retrieve the existing entry for the given project
-		String idxQuery = (idx == null) ? ""
-				: (" AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY) + "='"
-						+ idx + "'");
-		String query = "SELECT time,"
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY) + ","
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
-				+ " WHERE time >= " + String.valueOf(nanoFromTime) + " AND time <= " + String.valueOf(nanoToTime)
-				+ idxQuery + " AND "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + "='" + project
-				+ "' GROUP BY " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY);
-
-		List<Series> seriesList = executeMultiSeriesQuery(query);
-
-		for (Series series : seriesList) {
-			List<List<Object>> values = series.getValues();
-			if (null == values) {
-				continue;
-			}
-			String index = series.getTags()
-					.get(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY));
-
-			LocalDate minDate = LocalDate.now().plusYears(1000);
-			LocalDate maxDate = LocalDate.now().minusYears(1000);
-			for (List<Object> row : values) {
-				LocalDate current = LocalDate.parse((String) row.get(0), DateTimeFormatter.ISO_DATE_TIME);
-				if (current.isBefore(minDate)) {
-					minDate = current;
-				}
-				if (current.isAfter(maxDate)) {
-					maxDate = current;
-				}
-			}
-
-			long nanoMinTime = getNanoTime(minDate, false);
-			long nanoMaxTime = getNanoTime(maxDate, false);
-
-			String deleteQuery = "DELETE FROM "
+			// retrieve the existing entry for the given project
+			String idxQuery = (idx == null) ? ""
+					: (" AND " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY)
+							+ "='" + idx + "'");
+			String query = "SELECT time,"
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY) + ","
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
 					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
-					+ " WHERE " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY)
-					+ "='" + index + "' AND time >= " + String.valueOf(nanoMinTime) + " AND time <= "
-					+ String.valueOf(nanoMaxTime);
-			executeQuery(deleteQuery);
+					+ " WHERE time >= " + String.valueOf(nanoFromTime) + " AND time <= " + String.valueOf(nanoToTime)
+					+ idxQuery + " AND "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + "='"
+					+ project + "' GROUP BY "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY);
 
+			List<Series> seriesList = executeMultiSeriesQuery(query);
+
+			for (Series series : seriesList) {
+				List<List<Object>> values = series.getValues();
+				if (null == values) {
+					continue;
+				}
+				String index = series.getTags()
+						.get(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY));
+
+				LocalDate minDate = LocalDate.now().plusYears(1000);
+				LocalDate maxDate = LocalDate.now().minusYears(1000);
+				for (List<Object> row : values) {
+					LocalDate current = LocalDate.parse((String) row.get(0), DateTimeFormatter.ISO_DATE_TIME);
+					if (current.isBefore(minDate)) {
+						minDate = current;
+					}
+					if (current.isAfter(maxDate)) {
+						maxDate = current;
+					}
+				}
+
+				long nanoMinTime = getNanoTime(minDate, false);
+				long nanoMaxTime = getNanoTime(maxDate, false);
+
+				String deleteQuery = "DELETE FROM "
+						+ PropertiesService.getInstance()
+								.getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
+						+ " WHERE " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY)
+						+ "='" + index + "' AND time >= " + String.valueOf(nanoMinTime) + " AND time <= "
+						+ String.valueOf(nanoMaxTime);
+				executeQuery(deleteQuery);
+
+			}
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
 	}
 
@@ -393,53 +488,203 @@ public class InfluxService {
 	 *            to date
 	 */
 	public void createWeekEndsAndPublicHolidays(String employee, LocalDate from, LocalDate to) {
-		BatchPoints batchPoints = BatchPoints
-				.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
-				.retentionPolicy(
-						PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
-				.consistency(ConsistencyLevel.ALL).build();
-		LocalDate current = from.minusMonths(EPSILON_WE_MONTHS);
-		LocalDate lastWeekEndEntry = lastWeekendAndHolidayEntryMap.get(employee);
-		LocalDate tmpLastCalendarEntry = lastCalendarEntry;
-		while (!current.isAfter(to.plusMonths(EPSILON_WE_MONTHS))) {
-			if (current.isAfter(lastWeekEndEntry)) {
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".createWeekEndsAndPublicHolidays";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
+		s_this.setTag(JaegerUtil.T_EMPLOYEE, employee);
+		try {
+			// Logic
+			BatchPoints batchPoints = BatchPoints
+					.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
+					.retentionPolicy(
+							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
+					.consistency(ConsistencyLevel.ALL).build();
+			LocalDate current = from.minusMonths(EPSILON_WE_MONTHS);
+			LocalDate lastWeekEndEntry = lastWeekendAndHolidayEntryMap.get(employee);
+			LocalDate tmpLastCalendarEntry = lastCalendarEntry;
+			while (!current.isAfter(to.plusMonths(EPSILON_WE_MONTHS))) {
+				if (current.isAfter(lastWeekEndEntry)) {
 
-				EventBuilder eventBuilder = new EventBuilder();
-				eventBuilder.employee(employee);
-				boolean workingDay = false;
+					EventBuilder eventBuilder = new EventBuilder();
+					eventBuilder.employee(employee);
+					boolean workingDay = false;
 
-				if (null != getPublicHoliday(current)) {
-					eventBuilder.event(
-							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
-					eventBuilder
-							.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_NA_KEY));
-					eventBuilder.notes(getPublicHoliday(current).getName());
-				} else if (current.getDayOfWeek().equals(DayOfWeek.SATURDAY)
-						|| current.getDayOfWeek().equals(DayOfWeek.SUNDAY)) {
-					eventBuilder.event(
-							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
-					eventBuilder
-							.color(PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_WE_KEY));
-				} else {
-					workingDay = true;
+					if (null != getPublicHoliday(current)) {
+						eventBuilder.event(
+								PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_NA_KEY));
+						eventBuilder.color(
+								PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_NA_KEY));
+						eventBuilder.notes(getPublicHoliday(current).getName());
+					} else if (current.getDayOfWeek().equals(DayOfWeek.SATURDAY)
+							|| current.getDayOfWeek().equals(DayOfWeek.SUNDAY)) {
+						eventBuilder.event(
+								PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_WE_KEY));
+						eventBuilder.color(
+								PropertiesService.getInstance().getProperty(PropertiesService.GRAFANA_COLOR_WE_KEY));
+					} else {
+						workingDay = true;
+					}
+
+					Point point = createProjectAssignmentInfluxPoint(eventBuilder.build(), current, true, workingDay);
+					batchPoints.point(point);
+					lastWeekEndEntry = current;
+				}
+				if (current.isAfter(tmpLastCalendarEntry)) {
+					createCalendarEntry(batchPoints, current);
+					tmpLastCalendarEntry = current;
 				}
 
-				Point point = createProjectAssignmentInfluxPoint(eventBuilder.build(), current, true, workingDay);
-				batchPoints.point(point);
-				lastWeekEndEntry = current;
-			}
-			if (current.isAfter(tmpLastCalendarEntry)) {
-				createCalendarEntry(batchPoints, current);
-				tmpLastCalendarEntry = current;
+				current = current.plusDays(1);
 			}
 
-			current = current.plusDays(1);
+			writeToInflux(batchPoints);
+
+			lastWeekendAndHolidayEntryMap.put(employee, lastWeekEndEntry);
+			lastCalendarEntry = tmpLastCalendarEntry;
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
+	}
 
-		influx.write(batchPoints);
+	/**
+	 * Writes monthly report data.
+	 * 
+	 * @param actualDataPoint
+	 *            data to write
+	 */
+	public void enterMonthReportData(MonthReportDataPoint actualDataPoint) {
+		// Monitoring
+		String spanName = this.getClass().getSimpleName() + ".enterMonthReportData";
+		final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan(spanName);
+		s_this.setTag(JaegerUtil.T_YEAR_MONTH, actualDataPoint.getYearMonth());
+		s_this.setTag(JaegerUtil.T_EXPENSES, actualDataPoint.getExpenses());
+		s_this.setTag(JaegerUtil.T_COSTS, actualDataPoint.getCosts());
+		s_this.setTag(JaegerUtil.T_PROFIT, actualDataPoint.getProfit());
+		s_this.setTag(JaegerUtil.T_RETRUN_ON_SALES, actualDataPoint.getRetrunOnSales());
+		s_this.setTag(JaegerUtil.T_REVENUE, actualDataPoint.getRevenue());
+		s_this.setTag(JaegerUtil.T_UTILIZATION, actualDataPoint.getUtilization());
+		try {
+			// Logic
+			String yearMonth = actualDataPoint.getYearMonth();
+			String[] ymArray = yearMonth.split("-");
+			LocalDate date = LocalDate.of(Integer.parseInt(ymArray[0]), Integer.parseInt(ymArray[1]), 1);
 
-		lastWeekendAndHolidayEntryMap.put(employee, lastWeekEndEntry);
-		lastCalendarEntry = tmpLastCalendarEntry;
+			BatchPoints batchPoints = BatchPoints
+					.database(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY))
+					.retentionPolicy(
+							PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_RETENTION_POLICY_KEY))
+					.consistency(ConsistencyLevel.ALL).build();
+			Builder pointBuilder = Point
+					.measurement(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_VALIDATION_KEY))
+					.time(getNanoTime(date, false), TimeUnit.NANOSECONDS)
+					.tag(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_YEAR_MONTH_KEY),
+							yearMonth);
+			MonthReportDataPoint estimatedDataPoint = calculateEstimatedDataPoint(yearMonth);
+			writeReportData(pointBuilder, actualDataPoint);
+			writeReportData(pointBuilder, estimatedDataPoint);
+			batchPoints.point(pointBuilder.build());
+			writeToInflux(batchPoints);
+		} finally {
+			// Monitoring
+			s_this.deactivate();
+		}
+	}
+
+	/**
+	 * Calculates estimated data point from data in influx.
+	 * 
+	 * @param yearMonth
+	 *            the month for which the data point shell be calculated.
+	 * @return data point
+	 */
+	private MonthReportDataPoint calculateEstimatedDataPoint(String yearMonth) {
+		double costs = retrieveCostsReportData();
+		String query = "SELECT 100*(count("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_RATE_KEY) + ")-count("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_WORKINGDAY_KEY) + "))/count("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_WORKINGDAY_KEY) + "), sum("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_DAILY_EXPENSES_KEY) + "),sum("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_RATE_KEY) + "), (sum("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_RATE_KEY) + ")-"
+				+ String.valueOf(costs) + "), (100-(100*" + String.valueOf(costs) + "/(sum("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_RATE_KEY) + ")))) FROM "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY) + " WHERE "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_YEAR_MONTH_KEY) + "='"
+				+ yearMonth + "' AND ("
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_RATE_KEY) + " > 0 OR "
+				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_WORKINGDAY_KEY) + "=true)";
+		List<List<Object>> values = executeQuery(query);
+		if (null == values || null == values.get(0)) {
+			MonthReportDataPoint defaultDP = MonthReportDataPoint.getDefault(yearMonth);
+			defaultDP.setType(Type.ESTIMATED);
+			return defaultDP;
+		}
+		List<Object> row = values.get(0);
+
+		MonthReportDataPoint estimatedDataPoint = new MonthReportDataPoint();
+		estimatedDataPoint.setYearMonth(yearMonth);
+		estimatedDataPoint.setUtilization((Double) row.get(1));
+		estimatedDataPoint.setExpenses((Double) row.get(2));
+		estimatedDataPoint.setRevenue((Double) row.get(3));
+		estimatedDataPoint.setProfit((Double) row.get(4));
+		estimatedDataPoint.setRetrunOnSales((Double) row.get(5));
+		estimatedDataPoint.setCosts(costs);
+		estimatedDataPoint.setType(Type.ESTIMATED);
+		return estimatedDataPoint;
+	}
+
+	/**
+	 * Writes report data.
+	 * 
+	 * @param pointBuilder
+	 *            point builder
+	 * @param dataPoint
+	 *            data point to write
+	 */
+	private void writeReportData(Builder pointBuilder, MonthReportDataPoint dataPoint) {
+		pointBuilder.addField(
+				dataPoint.getType().toString()
+						+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_EXPENSES_KEY),
+				dataPoint.getExpenses());
+		pointBuilder.addField(
+				dataPoint.getType().toString()
+						+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_COSTS_KEY),
+				dataPoint.getCosts());
+		pointBuilder.addField(
+				dataPoint.getType().toString()
+						+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_REVENUE_KEY),
+				dataPoint.getRevenue());
+		pointBuilder.addField(
+				dataPoint.getType().toString()
+						+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROFIT_KEY),
+				dataPoint.getProfit());
+		pointBuilder.addField(
+				dataPoint.getType().toString()
+						+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_UTILIZATION_KEY),
+				dataPoint.getUtilization());
+		pointBuilder.addField(
+				dataPoint.getType().toString()
+						+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_RETURN_KEY),
+				dataPoint.getRetrunOnSales());
+	}
+
+	/**
+	 * Calculates costs from historical data.
+	 * 
+	 * @return costs
+	 */
+	private double retrieveCostsReportData() {
+		try {
+			String query = "SELECT MEAN(" + Type.ACTUAL.toString()
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_COSTS_KEY) + ") FROM "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_VALIDATION_KEY);
+			List<List<Object>> values = executeQuery(query);
+
+			return (Double) values.get(0).get(1);
+		} catch (Exception e) {
+			return 0.0;
+		}
 	}
 
 	/**
@@ -487,7 +732,7 @@ public class InfluxService {
 	 *            current date.
 	 */
 	private void createCalendarEntry(BatchPoints batchPoints, LocalDate current) {
-		Calendar date = Calendar.getInstance();
+		Calendar date = Calendar.getInstance(Locale.GERMANY);
 		date.setFirstDayOfWeek(Calendar.MONDAY);
 		date.set(current.getYear(), current.getMonthValue() - 1, current.getDayOfMonth(), WEEKEND_HOLIDAY_HOUR, 0, 0);
 		long nanoTime = getNanoTime(current, true);
@@ -514,27 +759,41 @@ public class InfluxService {
 	 * @return available index
 	 */
 	private int retrieveAvailableIndex(LocalDate from, LocalDate to) {
-		long nanoFromTime = getNanoTime(from, false);
-		long nanoToTime = getNanoTime(to, false);
-		int index = 1;
-		String query = "SELECT " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY)
-				+ "," + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
-				+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
-				+ " WHERE time >= " + String.valueOf(nanoFromTime) + " AND time <= " + String.valueOf(nanoToTime);
+		// Monitoring
+		final ActiveSpan s_this = JaegerUtil.getInstance()
+				.createNewActiveSpan(this.getClass().getSimpleName() + ".retrieveAvailableIndex");
 
-		List<List<Object>> values = executeQuery(query);
+		s_this.setTag(JaegerUtil.T_FROM, from.toString());
+		s_this.setTag(JaegerUtil.T_TO, to.toString());
 
-		if (null == values) {
+		try {
+			// Logic
+			long nanoFromTime = getNanoTime(from, false);
+			long nanoToTime = getNanoTime(to, false);
+			int index = 1;
+			String query = "SELECT " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_INDEX_KEY)
+					+ "," + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY)
+					+ " FROM "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_UNASSIGNED_PROJECTS_KEY)
+					+ " WHERE time >= " + String.valueOf(nanoFromTime) + " AND time <= " + String.valueOf(nanoToTime);
+
+			List<List<Object>> values = executeQuery(query);
+
+			if (null == values) {
+				return index;
+			}
+
+			Set<Integer> indezes = values.stream().map(p -> Integer.parseInt((String) p.get(1)))
+					.collect(Collectors.toSet());
+
+			while (indezes.contains(index)) {
+				index++;
+			}
 			return index;
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-
-		Set<Integer> indezes = values.stream().map(p -> Integer.parseInt((String) p.get(1)))
-				.collect(Collectors.toSet());
-
-		while (indezes.contains(index)) {
-			index++;
-		}
-		return index;
 	}
 
 	/**
@@ -562,39 +821,55 @@ public class InfluxService {
 	 * @return dates for non project events.
 	 */
 	private Set<LocalDate> getNonProjectEvents(LocalDate from, LocalDate to, String employee) {
-		long fromNanoTime = getNanoTime(from, true);
-		long toNanoTime = getNanoTime(to, true);
+		// Monitoring
+		final ActiveSpan s_this = JaegerUtil.getInstance()
+				.createNewActiveSpan(this.getClass().getSimpleName() + ".getNonProjectEvents");
 
-		String query = "SELECT " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY)
-				+ " FROM " + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY)
-				+ " WHERE time >= " + String.valueOf(fromNanoTime) + " AND time <= " + String.valueOf(toNanoTime)
-				+ " AND \"" + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY)
-				+ "\"='" + employee + "' AND ";
+		s_this.setTag(JaegerUtil.T_EMPLOYEE, employee);
+		s_this.setTag(JaegerUtil.T_FROM, from.toString());
+		s_this.setTag(JaegerUtil.T_TO, to.toString());
 
-		boolean first = true;
-		Set<String> projectsToExclude = new HashSet<>(Arrays.asList(PROJECTS_TO_EXCLUDE));
-		projectsToExclude
-				.remove(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY));
-		for (String prj : projectsToExclude) {
+		try {
 
-			if (!first) {
-				query += " OR";
-			} else {
-				query += " (";
-				first = false;
+			// Logic
+			long fromNanoTime = getNanoTime(from, true);
+			long toNanoTime = getNanoTime(to, true);
+
+			String query = "SELECT "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY) + " FROM "
+					+ PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_M_PROJECTS_KEY)
+					+ " WHERE time >= " + String.valueOf(fromNanoTime) + " AND time <= " + String.valueOf(toNanoTime)
+					+ " AND \"" + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_T_EMPLOYEE_KEY)
+					+ "\"='" + employee + "' AND ";
+
+			boolean first = true;
+			Set<String> projectsToExclude = new HashSet<>(Arrays.asList(PROJECTS_TO_EXCLUDE));
+			projectsToExclude.remove(
+					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_V_PROJECT_REMOVED_KEY));
+			for (String prj : projectsToExclude) {
+
+				if (!first) {
+					query += " OR";
+				} else {
+					query += " (";
+					first = false;
+				}
+				query += " \"" + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY)
+						+ "\"='" + prj + "'";
 			}
-			query += " \"" + PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_PROJECT_KEY)
-					+ "\"='" + prj + "'";
-		}
-		query += " )";
-		List<List<Object>> values = executeQuery(query);
+			query += " )";
+			List<List<Object>> values = executeQuery(query);
 
-		if (null == values) {
-			return new HashSet<LocalDate>();
+			if (null == values) {
+				return new HashSet<LocalDate>();
+			}
+			return values.stream().map(row -> LocalDate.parse((String) row.get(0), DateTimeFormatter.ISO_DATE_TIME))
+					.collect(Collectors.toSet());
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
 
-		return values.stream().map(row -> LocalDate.parse((String) row.get(0), DateTimeFormatter.ISO_DATE_TIME))
-				.collect(Collectors.toSet());
 	}
 
 	/**
@@ -606,22 +881,37 @@ public class InfluxService {
 	 *            Influx Batchpoints to add the assignment to.
 	 */
 	private void assignProject(final ProjectAssignment projectAssignment, final BatchPoints batchPoints) {
-		LocalDate current = projectAssignment.getFrom();
+		// Monitoring
+		final ActiveSpan s_this = JaegerUtil.getInstance()
+				.createNewActiveSpan(this.getClass().getSimpleName() + ".assignProject");
 
-		Set<LocalDate> datesToExclude = null;
-		if (projectAssignment.isSkipEvents()) {
-			datesToExclude = getNonProjectEvents(projectAssignment.getFrom(), projectAssignment.getTo(),
-					projectAssignment.getEmployee());
-		}
+		s_this.setTag(JaegerUtil.T_EMPLOYEE, projectAssignment.getEmployee());
+		s_this.setTag(JaegerUtil.T_PROJECT, projectAssignment.getProject());
+		s_this.setTag(JaegerUtil.T_FROM, projectAssignment.getFrom().toString());
+		s_this.setTag(JaegerUtil.T_TO, projectAssignment.getTo().toString());
 
-		while (!current.isAfter(projectAssignment.getTo())) {
-			if (isDayToBeAssigned(projectAssignment, current, datesToExclude)) {
-				ProjectAssignment tmpProjectAssignment = updateProjectAssignmentForProjectRemoval(projectAssignment,
-						current);
-				Point point = createProjectAssignmentInfluxPoint(tmpProjectAssignment, current, false, null);
-				batchPoints.point(point);
+		try {
+			// Logic
+			LocalDate current = projectAssignment.getFrom();
+
+			Set<LocalDate> datesToExclude = null;
+			if (projectAssignment.isSkipEvents()) {
+				datesToExclude = getNonProjectEvents(projectAssignment.getFrom(), projectAssignment.getTo(),
+						projectAssignment.getEmployee());
 			}
-			current = current.plusDays(1);
+
+			while (!current.isAfter(projectAssignment.getTo())) {
+				if (isDayToBeAssigned(projectAssignment, current, datesToExclude)) {
+					ProjectAssignment tmpProjectAssignment = updateProjectAssignmentForProjectRemoval(projectAssignment,
+							current);
+					Point point = createProjectAssignmentInfluxPoint(tmpProjectAssignment, current, false, null);
+					batchPoints.point(point);
+				}
+				current = current.plusDays(1);
+			}
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
 	}
 
@@ -667,7 +957,8 @@ public class InfluxService {
 					projectAssignment.getRate());
 		}
 		if (null != projectAssignment.getExpenses()) {
-			pointBuilder.addField(PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_EXPENSES_KEY),
+			pointBuilder.addField(
+					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_F_DAILY_EXPENSES_KEY),
 					projectAssignment.getExpenses());
 		}
 		if (null != projectAssignment.getNotes()) {
@@ -725,7 +1016,7 @@ public class InfluxService {
 	 *            indicates which time of day to use for the data point
 	 * @return nano timestamp
 	 */
-	private long getNanoTime(LocalDate current, boolean weekendOrPublicHoliday) {
+	public long getNanoTime(LocalDate current, boolean weekendOrPublicHoliday) {
 		Calendar date = Calendar.getInstance();
 		date.set(current.getYear(), current.getMonthValue() - 1, current.getDayOfMonth(),
 				weekendOrPublicHoliday ? WEEKEND_HOLIDAY_HOUR : PROJECT_HOUR, 0, 0);
@@ -774,21 +1065,33 @@ public class InfluxService {
 	 * @return result row
 	 */
 	private List<List<Object>> executeQuery(String queryStr) {
-		Query query = new Query(queryStr,
-				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY));
+		// Monitoring
+		final ActiveSpan s_this = JaegerUtil.getInstance()
+				.createNewActiveSpan(this.getClass().getSimpleName() + ".executeQuery");
 
-		QueryResult qResult = influx.query(query);
-		List<Result> results = qResult.getResults();
+		s_this.log(queryStr);
 
-		if (results.size() != 1) {
-			return null;
+		try {
+			// Logic
+			Query query = new Query(queryStr,
+					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY));
+
+			QueryResult qResult = influx.query(query);
+			List<Result> results = qResult.getResults();
+
+			if (results.size() != 1) {
+				return null;
+			}
+			Result result = results.get(0);
+			if (null == result.getSeries() || result.getSeries().size() != 1) {
+				return null;
+			}
+			Series series = result.getSeries().get(0);
+			return series.getValues();
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-		Result result = results.get(0);
-		if (null == result.getSeries() || result.getSeries().size() != 1) {
-			return null;
-		}
-		Series series = result.getSeries().get(0);
-		return series.getValues();
 	}
 
 	/**
@@ -799,20 +1102,32 @@ public class InfluxService {
 	 * @return result row
 	 */
 	private List<Series> executeMultiSeriesQuery(String queryStr) {
-		Query query = new Query(queryStr,
-				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY));
+		// Monitoring
+		final ActiveSpan s_this = JaegerUtil.getInstance()
+				.createNewActiveSpan(this.getClass().getSimpleName() + ".executeMultiSeriesQuery");
 
-		QueryResult qResult = influx.query(query);
-		List<Result> results = qResult.getResults();
+		s_this.log(queryStr);
 
-		if (results.size() != 1) {
-			return null;
+		try {
+			// Logic
+			Query query = new Query(queryStr,
+					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_DATABASE_KEY));
+
+			QueryResult qResult = influx.query(query);
+			List<Result> results = qResult.getResults();
+
+			if (results.size() != 1) {
+				return null;
+			}
+			Result result = results.get(0);
+			if (null == result.getSeries() || result.getSeries().size() < 1) {
+				return null;
+			}
+			return result.getSeries();
+		} finally {
+			// Monitoring
+			s_this.deactivate();
 		}
-		Result result = results.get(0);
-		if (null == result.getSeries() || result.getSeries().size() < 1) {
-			return null;
-		}
-		return result.getSeries();
 	}
 
 	/**
@@ -824,5 +1139,26 @@ public class InfluxService {
 	 */
 	private String getYearMonth(LocalDate current) {
 		return String.valueOf(current.getYear()) + "-" + String.valueOf(current.getMonthValue());
+	}
+
+	/**
+	 * Writes batch points to influx.
+	 * 
+	 * @param batchPoints
+	 *            points to write.
+	 */
+	private void writeToInflux(BatchPoints batchPoints) {
+		// Monitoring
+		final ActiveSpan s_this = JaegerUtil.getInstance()
+				.createNewActiveSpan(this.getClass().getSimpleName() + ".writeToInflux");
+
+		s_this.setTag(JaegerUtil.T_POINTS_TO_WRITE, batchPoints.getPoints().size());
+
+		try {
+			influx.write(batchPoints);
+		} finally {
+			// Monitoring
+			s_this.deactivate();
+		}
 	}
 }

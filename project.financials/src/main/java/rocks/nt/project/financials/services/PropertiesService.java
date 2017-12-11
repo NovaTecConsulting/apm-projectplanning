@@ -19,9 +19,14 @@ import com.vaadin.server.VaadinService;
 public class PropertiesService {
 	private static final Logger LOGGER = LoggerFactory.getLogger(PropertiesService.class);
 
+	public static final int HEARTBEAT_INTERVAL_SEC = 120;
+	
 	public static final String APM_PROJECTS_HOME = "APM_PROJECTS_HOME";
 	public static final String APM_LOGIN_USER = "apm.login.user";
 	public static final String APM_LOGIN_PW = "apm.login.pw";
+	public static final String GITHUB_ORGANIZATIONS_KEY = "github.valid.organization.ids";
+	public static final String GITHUB_CLIENT_ID_KEY = "github.client.id";
+	public static final String GITHUB_CLIENT_SECRET_KEY = "github.client.secret";
 	public static final String GRAFANA_DASHBOARD_PROJECTS_KEY = "grafana.dashboard.projects.url";
 	public static final String INFLUX_URL_KEY = "influx.url";
 	public static final String INFLUX_USER_KEY = "influx.user";
@@ -37,7 +42,7 @@ public class PropertiesService {
 	public static final String INFLUX_F_STATUS_KEY = "influx.field.bookingStatus";
 	public static final String INFLUX_F_COLOR_KEY = "influx.field.color";
 	public static final String INFLUX_F_RATE_KEY = "influx.field.dailyRate";
-	public static final String INFLUX_F_EXPENSES_KEY = "influx.field.dailyExpenses";
+	public static final String INFLUX_F_DAILY_EXPENSES_KEY = "influx.field.dailyExpenses";
 	public static final String INFLUX_F_NOTES_KEY = "influx.field.notes";
 	public static final String INFLUX_F_WORKINGDAY_KEY = "influx.field.workingDay";
 	public static final String INFLUX_V_PROJECT_WE_KEY = "influx.value.weekend";
@@ -49,6 +54,15 @@ public class PropertiesService {
 	public static final String INFLUX_BOOKING_STATUS_HARD_KEY = "influx.value.hardBooked";
 	public static final String INFLUX_BOOKING_STATUS_SOFT_KEY = "influx.value.softBooked";
 	public static final String INFLUX_BOOKING_STATUS_REQUEST_KEY = "influx.value.request";
+	
+	public static final String INFLUX_M_VALIDATION_KEY = "influx.measurement.validation";
+	public static final String INFLUX_F_EXPENSES_KEY = "influx.field.expenses";
+	public static final String INFLUX_F_COSTS_KEY = "influx.field.costs";
+	public static final String INFLUX_F_REVENUE_KEY = "influx.field.revenue";
+	public static final String INFLUX_F_PROFIT_KEY = "influx.field.profit";
+	public static final String INFLUX_F_UTILIZATION_KEY = "influx.field.utilization";
+	public static final String INFLUX_F_RETURN_KEY = "influx.field.return";
+
 	public static final String GRAFANA_COLOR_STATUS_HARD_KEY = "grafana.value.color.hardBooked";
 	public static final String GRAFANA_COLOR_STATUS_SOFT_KEY = "grafana.value.color.softBooked";
 	public static final String GRAFANA_COLOR_STATUS_REQUEST_KEY = "grafana.value.color.request";

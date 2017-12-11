@@ -7,13 +7,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import com.google.gson.Gson;
+
+import io.opentracing.ActiveSpan;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import rocks.nt.project.financials.data.Holiday;
-
-import com.google.gson.Gson;
 
 /**
  * Service to retrieve public holidays.
@@ -86,7 +87,11 @@ public class HolidayService {
 	 */
 	public Map<LocalDate, Holiday> getHolidays(int year) {
 		if (!holidaysMap.containsKey(year)) {
+			// Monitoring
+			final ActiveSpan s_this = JaegerUtil.getInstance().createNewActiveSpan("HolidayService.getHolidays");
+			s_this.setTag("year", year);
 			try {
+				//Logic
 				HttpUrl.Builder urlBuilder = HttpUrl.parse(SERVICE_URL).newBuilder();
 				urlBuilder.addQueryParameter(QUERY_PARAMETER, String.valueOf(year));
 				String url = urlBuilder.build().toString();
@@ -103,10 +108,15 @@ public class HolidayService {
 				holidaysMap.put(year, result);
 			} catch (IOException e) {
 				throw new RuntimeException(e);
+			} finally {
+				// Monitoring
+				s_this.deactivate();
+
 			}
 		}
 
 		return holidaysMap.get(year);
+
 	}
 
 	/**
@@ -121,7 +131,8 @@ public class HolidayService {
 		Map<String, Map<String, Map<String, String>>> map = new Gson().fromJson(jsonResponse, HashMap.class);
 		Map<String, Map<String, String>> bwMap = map.get(BADEN_WUERTTEMBERG);
 		return bwMap.entrySet().stream().map(entry -> {
-			return new Holiday(entry.getKey(), LocalDate.parse((String) entry.getValue().get(DATE_PROPERTY), DateTimeFormatter.ISO_DATE));
+			return new Holiday(entry.getKey(),
+					LocalDate.parse((String) entry.getValue().get(DATE_PROPERTY), DateTimeFormatter.ISO_DATE));
 		}).collect(Collectors.toMap(Holiday::getDate, h -> h));
 	}
 }

@@ -10,8 +10,6 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
-import org.w3c.dom.DOMConfiguration;
-
 import com.vaadin.data.HasValue.ValueChangeListener;
 import com.vaadin.icons.VaadinIcons;
 import com.vaadin.server.ErrorMessage;
@@ -26,15 +24,16 @@ import com.vaadin.ui.DateField;
 import com.vaadin.ui.FormLayout;
 import com.vaadin.ui.GridLayout;
 import com.vaadin.ui.HorizontalLayout;
-import com.vaadin.ui.JavaScript;
 import com.vaadin.ui.TabSheet;
 import com.vaadin.ui.TextField;
-import com.vaadin.ui.UI;
 import com.vaadin.ui.VerticalLayout;
 import com.vaadin.ui.themes.ValoTheme;
 
+import io.opentracing.ActiveSpan;
+import rocks.nt.project.financials.data.ProjectAssignment;
 import rocks.nt.project.financials.data.ProjectAssignment.ProjectAssignmentBuilder;
 import rocks.nt.project.financials.services.InfluxService;
+import rocks.nt.project.financials.services.JaegerUtil;
 import rocks.nt.project.financials.services.PropertiesService;
 
 /**
@@ -44,6 +43,7 @@ import rocks.nt.project.financials.services.PropertiesService;
  *
  */
 public class ProjectsTab {
+
 	/**
 	 * Project deletion constant string.
 	 */
@@ -144,206 +144,211 @@ public class ProjectsTab {
 	 *            root layout
 	 */
 	private void createProjectsTab(VerticalLayout projectsTab) {
-		// Form Layout
-		FormLayout formLayout = new FormLayout();
-		formLayout.setSizeFull();
+		final ActiveSpan s_thisSpan = JaegerUtil.getInstance().createNewActiveSpan("Open Projects Tab");
+		try {
+			// Form Layout
+			FormLayout formLayout = new FormLayout();
+			formLayout.setSizeFull();
 
-		// Employee Selection
-		employeeComboBox = new ComboBox<String>("Employee");
-		List<String> employeeSelection = InfluxService.getInstance().getKnownEmployees();
+			// Employee Selection
+			employeeComboBox = new ComboBox<String>("Employee");
+			List<String> employeeSelection = InfluxService.getInstance().getKnownEmployees();
 
-		employeeComboBox.setItems(employeeSelection);
-		employeeComboBox.setIcon(VaadinIcons.USER);
-		if (!employeeSelection.isEmpty()) {
-			employeeComboBox.setSelectedItem(employeeSelection.get(0));
-		} else {
-			String defaultValue = "Mustermann";
-			employeeSelection.add(defaultValue);
 			employeeComboBox.setItems(employeeSelection);
-			employeeComboBox.setSelectedItem(defaultValue);
-		}
-
-		employeeComboBox.setNewItemHandler(inputString -> {
-			String trimmedString = inputString.trim();
-			if (!trimmedString.isEmpty() && !employeeSelection.contains(trimmedString)) {
-				employeeSelection.add(trimmedString);
+			employeeComboBox.setIcon(VaadinIcons.USER);
+			if (!employeeSelection.isEmpty()) {
+				employeeComboBox.setSelectedItem(employeeSelection.get(0));
+			} else {
+				String defaultValue = "Mustermann";
+				employeeSelection.add(defaultValue);
 				employeeComboBox.setItems(employeeSelection);
-				employeeComboBox.setSelectedItem(trimmedString);
+				employeeComboBox.setSelectedItem(defaultValue);
 			}
-		});
-		employeeComboBox.setEmptySelectionAllowed(false);
 
-		// Project Selection
-		projectComboBox = new ComboBox<String>("Project");
-		final List<String> projectSelection = InfluxService.getInstance().getKnownProjects();
-		projectSelection.add(0, NO_PROJECT);
+			employeeComboBox.setNewItemHandler(inputString -> {
+				String trimmedString = inputString.trim();
+				if (!trimmedString.isEmpty() && !employeeSelection.contains(trimmedString)) {
+					employeeSelection.add(trimmedString);
+					employeeComboBox.setItems(employeeSelection);
+					employeeComboBox.setSelectedItem(trimmedString);
+				}
+			});
+			employeeComboBox.setEmptySelectionAllowed(false);
 
-		projectComboBox.setItems(projectSelection);
-		projectComboBox.setIcon(VaadinIcons.TOOLBOX);
-		projectComboBox.setSelectedItem(projectSelection.get(0));
+			// Project Selection
+			projectComboBox = new ComboBox<String>("Project");
+			final List<String> projectSelection = InfluxService.getInstance().getKnownProjects();
+			projectSelection.add(0, NO_PROJECT);
 
-		projectComboBox.addSelectionListener(e -> {
-			if (projectComboBox.getValue().equals(NO_PROJECT)) {
-				setEnabledStateForCustomerProjectFields(false);
-			} else {
-				setEnabledStateForCustomerProjectFields(true);
-			}
-		});
+			projectComboBox.setItems(projectSelection);
+			projectComboBox.setIcon(VaadinIcons.TOOLBOX);
+			projectComboBox.setSelectedItem(projectSelection.get(0));
 
-		projectComboBox.setNewItemHandler(inputString -> {
-			String trimmedString = inputString.trim();
-			if (!trimmedString.isEmpty() && !projectSelection.contains(trimmedString)) {
-				projectSelection.add(trimmedString);
-				projectComboBox.setItems(projectSelection);
-				projectComboBox.setSelectedItem(trimmedString);
-			}
-		});
-		projectComboBox.setEmptySelectionAllowed(false);
+			projectComboBox.addSelectionListener(e -> {
+				if (projectComboBox.getValue().equals(NO_PROJECT)) {
+					setEnabledStateForCustomerProjectFields(false);
+				} else {
+					setEnabledStateForCustomerProjectFields(true);
+				}
+			});
 
-		// Booking status
-		bookingStatusComboBox = new ComboBox<String>("Booking Status", Arrays.asList(BOOKING_STATES));
-		bookingStatusComboBox.setValue(
-				PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_REQUEST_KEY));
-		bookingStatusComboBox.setEmptySelectionAllowed(false);
-		bookingStatusComboBox.setTextInputAllowed(false);
-		bookingStatusComboBox.setIcon(VaadinIcons.CLIPBOARD_CHECK);
-		bookingStatusComboBox.setItemIconGenerator(item -> {
-			if (item.equals(
-					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_REQUEST_KEY))) {
-				return VaadinIcons.QUESTION_CIRCLE_O;
-			} else if (item.equals(
-					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_SOFT_KEY))) {
-				return VaadinIcons.QUESTION_CIRCLE;
-			} else if (item.equals(
-					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_HARD_KEY))) {
-				return VaadinIcons.EXCLAMATION_CIRCLE;
-			}
-			return null;
-		});
-		// Rate
-		rateField = new TextField("Daily Rate");
-		rateField.setPlaceholder("€1000");
-		rateField.setValue("€1000");
-		rateField.addValueChangeListener(event -> {
-			if (!event.getValue().matches("[€]?[\\s]*[0-9]+")) {
-				rateField.setComponentError(new UserError("This is not a valid daily rate format!"));
-			} else {
-				rateField.setComponentError(null);
-			}
-			setEnabledStateForAssignButton();
-		});
-		rateField.setIcon(VaadinIcons.EURO);
+			projectComboBox.setNewItemHandler(inputString -> {
+				String trimmedString = inputString.trim();
+				if (!trimmedString.isEmpty() && !projectSelection.contains(trimmedString)) {
+					projectSelection.add(trimmedString);
+					projectComboBox.setItems(projectSelection);
+					projectComboBox.setSelectedItem(trimmedString);
+				}
+			});
+			projectComboBox.setEmptySelectionAllowed(false);
 
-		// Expected Expenses
-		expectedExpensesField = new TextField("Expected Daily Expenses");
-		expectedExpensesField.setPlaceholder("€200");
-		expectedExpensesField.setValue("€0");
-		expectedExpensesField.addValueChangeListener(event -> {
-			if (!event.getValue().matches("[€]?[\\s]*[0-9]+")) {
-				expectedExpensesField.setComponentError(new UserError("This is not a valid expenses format!"));
-			} else {
-				expectedExpensesField.setComponentError(null);
-			}
-			setEnabledStateForAssignButton();
-		});
-		expectedExpensesField.setIcon(VaadinIcons.AIRPLANE);
+			// Booking status
+			bookingStatusComboBox = new ComboBox<String>("Booking Status", Arrays.asList(BOOKING_STATES));
+			bookingStatusComboBox.setValue(
+					PropertiesService.getInstance().getProperty(PropertiesService.INFLUX_BOOKING_STATUS_REQUEST_KEY));
+			bookingStatusComboBox.setEmptySelectionAllowed(false);
+			bookingStatusComboBox.setTextInputAllowed(false);
+			bookingStatusComboBox.setIcon(VaadinIcons.CLIPBOARD_CHECK);
+			bookingStatusComboBox.setItemIconGenerator(item -> {
+				if (item.equals(PropertiesService.getInstance()
+						.getProperty(PropertiesService.INFLUX_BOOKING_STATUS_REQUEST_KEY))) {
+					return VaadinIcons.QUESTION_CIRCLE_O;
+				} else if (item.equals(PropertiesService.getInstance()
+						.getProperty(PropertiesService.INFLUX_BOOKING_STATUS_SOFT_KEY))) {
+					return VaadinIcons.QUESTION_CIRCLE;
+				} else if (item.equals(PropertiesService.getInstance()
+						.getProperty(PropertiesService.INFLUX_BOOKING_STATUS_HARD_KEY))) {
+					return VaadinIcons.EXCLAMATION_CIRCLE;
+				}
+				return null;
+			});
+			// Rate
+			rateField = new TextField("Daily Rate");
+			rateField.setPlaceholder("€1000");
+			rateField.setValue("€1000");
+			rateField.addValueChangeListener(event -> {
+				if (!event.getValue().matches("[€]?[\\s]*[0-9]+")) {
+					rateField.setComponentError(new UserError("This is not a valid daily rate format!"));
+				} else {
+					rateField.setComponentError(null);
+				}
+				setEnabledStateForAssignButton();
+			});
+			rateField.setIcon(VaadinIcons.EURO);
 
-		// Time range selection
-		fromDateField = new DateField();
-		toDateField = new DateField();
+			// Expected Expenses
+			expectedExpensesField = new TextField("Expected Daily Expenses");
+			expectedExpensesField.setPlaceholder("€200");
+			expectedExpensesField.setValue("€0");
+			expectedExpensesField.addValueChangeListener(event -> {
+				if (!event.getValue().matches("[€]?[\\s]*[0-9]+")) {
+					expectedExpensesField.setComponentError(new UserError("This is not a valid expenses format!"));
+				} else {
+					expectedExpensesField.setComponentError(null);
+				}
+				setEnabledStateForAssignButton();
+			});
+			expectedExpensesField.setIcon(VaadinIcons.AIRPLANE);
 
-		final UserError fromError = new UserError("'From' date must not be after 'To' date!");
-		final UserError toError = new UserError("'To' date must not be before 'From' date!");
+			// Time range selection
+			fromDateField = new DateField();
+			toDateField = new DateField();
 
-		ValueChangeListener<LocalDate> valueChangeListener = event -> {
-			if (fromDateField.getValue().isAfter(toDateField.getValue())) {
-				toDateField.setComponentError(toError);
-				fromDateField.setComponentError(fromError);
-			} else {
+			final UserError fromError = new UserError("'From' date must not be after 'To' date!");
+			final UserError toError = new UserError("'To' date must not be before 'From' date!");
+
+			ValueChangeListener<LocalDate> valueChangeListener = event -> {
+				if (fromDateField.getValue().isAfter(toDateField.getValue())) {
+					toDateField.setComponentError(toError);
+					fromDateField.setComponentError(fromError);
+				} else {
+					toDateField.setComponentError(null);
+					fromDateField.setComponentError(null);
+				}
+				setEnabledStateForAssignButton();
+			};
+			final String dateFormat = "yyyy-MM-dd";
+			fromDateField.setCaption("From");
+			fromDateField.setDateFormat(dateFormat);
+			fromDateField.setValue(LocalDate.now());
+			fromDateField.addValueChangeListener(event -> {
+				if (fromDateField.getValue().isAfter(toDateField.getValue())) {
+					toDateField.setValue(fromDateField.getValue());
+				}
 				toDateField.setComponentError(null);
 				fromDateField.setComponentError(null);
-			}
-			setEnabledStateForAssignButton();
-		};
-		final String dateFormat = "yyyy-MM-dd";
-		fromDateField.setCaption("From");
-		fromDateField.setDateFormat(dateFormat);
-		fromDateField.setValue(LocalDate.now());
-		fromDateField.addValueChangeListener(event -> {
-			if (fromDateField.getValue().isAfter(toDateField.getValue())) {
-				toDateField.setValue(fromDateField.getValue());
-			}
-			toDateField.setComponentError(null);
-			fromDateField.setComponentError(null);
-		});
+			});
 
-		toDateField.setCaption("To");
-		toDateField.setDateFormat(dateFormat);
-		toDateField.setValue(LocalDate.now().plusDays(1));
-		toDateField.addValueChangeListener(valueChangeListener);
+			toDateField.setCaption("To");
+			toDateField.setDateFormat(dateFormat);
+			toDateField.setValue(LocalDate.now().plusDays(1));
+			toDateField.addValueChangeListener(valueChangeListener);
 
-		// Days of Week selection
-		checkBoxGroup = new CheckBoxGroup<DayOfWeek>("Days", Arrays.asList(DayOfWeek.values()));
-		checkBoxGroup.addStyleName(ValoTheme.OPTIONGROUP_HORIZONTAL);
-		checkBoxGroup.setItemCaptionGenerator(item -> item.getDisplayName(TextStyle.SHORT, Locale.ENGLISH));
+			// Days of Week selection
+			checkBoxGroup = new CheckBoxGroup<DayOfWeek>("Days", Arrays.asList(DayOfWeek.values()));
+			checkBoxGroup.addStyleName(ValoTheme.OPTIONGROUP_HORIZONTAL);
+			checkBoxGroup.setItemCaptionGenerator(item -> item.getDisplayName(TextStyle.SHORT, Locale.ENGLISH));
 
-		Set<DayOfWeek> selectedDays = new HashSet<DayOfWeek>();
-		selectedDays.add(DayOfWeek.MONDAY);
-		selectedDays.add(DayOfWeek.TUESDAY);
-		selectedDays.add(DayOfWeek.WEDNESDAY);
-		selectedDays.add(DayOfWeek.THURSDAY);
-		checkBoxGroup.setValue(selectedDays);
-		checkBoxGroup.addStyleName(ValoTheme.CHECKBOX_SMALL);
+			Set<DayOfWeek> selectedDays = new HashSet<DayOfWeek>();
+			selectedDays.add(DayOfWeek.MONDAY);
+			selectedDays.add(DayOfWeek.TUESDAY);
+			selectedDays.add(DayOfWeek.WEDNESDAY);
+			selectedDays.add(DayOfWeek.THURSDAY);
+			checkBoxGroup.setValue(selectedDays);
+			checkBoxGroup.addStyleName(ValoTheme.CHECKBOX_SMALL);
 
-		// Skip Public Holidays
-		skipPublicHolidaysCheckBox = new CheckBox("Skip Public Holidays     ");
-		skipPublicHolidaysCheckBox.addStyleName(ValoTheme.CHECKBOX_SMALL);
-		skipPublicHolidaysCheckBox.setValue(true);
+			// Skip Public Holidays
+			skipPublicHolidaysCheckBox = new CheckBox("Skip Public Holidays     ");
+			skipPublicHolidaysCheckBox.addStyleName(ValoTheme.CHECKBOX_SMALL);
+			skipPublicHolidaysCheckBox.setValue(true);
 
-		// Skip Events
-		skipOtherEventsCheckBox = new CheckBox("Skip Other Events");
-		skipOtherEventsCheckBox.setValue(true);
-		skipOtherEventsCheckBox.addStyleName(ValoTheme.CHECKBOX_SMALL);
+			// Skip Events
+			skipOtherEventsCheckBox = new CheckBox("Skip Other Events");
+			skipOtherEventsCheckBox.setValue(true);
+			skipOtherEventsCheckBox.addStyleName(ValoTheme.CHECKBOX_SMALL);
 
-		CheckBox cb1 = new CheckBox("Test1");
-		cb1.addStyleName(ValoTheme.CHECKBOX_SMALL);
-		CheckBox cb2 = new CheckBox("Test2");
-		cb2.addStyleName(ValoTheme.CHECKBOX_SMALL);
-		VerticalLayout vl = new VerticalLayout(cb1, cb2);
-		vl.setMargin(false);
-		// Assign Button
-		assignButton = new Button("Assign Project");
-		assignButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
-		assignButton.addClickListener(event -> this.assignProject());
+			CheckBox cb1 = new CheckBox("Test1");
+			cb1.addStyleName(ValoTheme.CHECKBOX_SMALL);
+			CheckBox cb2 = new CheckBox("Test2");
+			cb2.addStyleName(ValoTheme.CHECKBOX_SMALL);
+			VerticalLayout vl = new VerticalLayout(cb1, cb2);
+			vl.setMargin(false);
+			// Assign Button
+			assignButton = new Button("Assign Project");
+			assignButton.addStyleName(ValoTheme.BUTTON_PRIMARY);
+			assignButton.addClickListener(event -> this.assignProject());
 
-		// Reload Page Checkbox
-		reloadPageCheckBox = new CheckBox("Reload Page");
-		reloadPageCheckBox.setValue(true);
-		reloadPageCheckBox.addStyleName(ValoTheme.CHECKBOX_SMALL);
+			// Reload Page Checkbox
+			reloadPageCheckBox = new CheckBox("Reload Page");
+			reloadPageCheckBox.setValue(true);
+			reloadPageCheckBox.addStyleName(ValoTheme.CHECKBOX_SMALL);
 
-		// Notes Field
-		notesField = new TextField("Notes");
-		notesField.setSizeFull();
+			// Notes Field
+			notesField = new TextField("Notes");
+			notesField.setSizeFull();
 
-		GridLayout gridLayout = new GridLayout(2, 2);
-		gridLayout.addComponent(skipPublicHolidaysCheckBox, 0, 0);
-		gridLayout.addComponent(skipOtherEventsCheckBox, 1, 0);
-		gridLayout.addComponent(reloadPageCheckBox, 0, 1);
-		gridLayout.addComponent(assignButton, 1, 1);
-		gridLayout.setMargin(false);
-		gridLayout.setSpacing(true);
+			GridLayout gridLayout = new GridLayout(2, 2);
+			gridLayout.addComponent(skipPublicHolidaysCheckBox, 0, 0);
+			gridLayout.addComponent(skipOtherEventsCheckBox, 1, 0);
+			gridLayout.addComponent(reloadPageCheckBox, 0, 1);
+			gridLayout.addComponent(assignButton, 1, 1);
+			gridLayout.setMargin(false);
+			gridLayout.setSpacing(true);
 
-		HorizontalLayout row1 = new HorizontalLayout(employeeComboBox, projectComboBox, fromDateField, toDateField);
-		HorizontalLayout row2 = new HorizontalLayout(rateField, expectedExpensesField, checkBoxGroup);
-		HorizontalLayout row3 = new HorizontalLayout(bookingStatusComboBox, notesField, gridLayout);
+			HorizontalLayout row1 = new HorizontalLayout(employeeComboBox, projectComboBox, fromDateField, toDateField);
+			HorizontalLayout row2 = new HorizontalLayout(rateField, expectedExpensesField, checkBoxGroup);
+			HorizontalLayout row3 = new HorizontalLayout(bookingStatusComboBox, notesField, gridLayout);
 
-		formLayout.addComponent(row1);
-		formLayout.addComponent(row2);
-		formLayout.addComponent(row3);
+			formLayout.addComponent(row1);
+			formLayout.addComponent(row2);
+			formLayout.addComponent(row3);
 
-		projectsTab.addComponent(formLayout);
-		projectsTab.setComponentAlignment(formLayout, Alignment.TOP_CENTER);
-		setEnabledStateForCustomerProjectFields(false);
+			projectsTab.addComponent(formLayout);
+			projectsTab.setComponentAlignment(formLayout, Alignment.TOP_CENTER);
+			setEnabledStateForCustomerProjectFields(false);
+		} finally {
+			s_thisSpan.deactivate();
+		}
 	}
 
 	private void setEnabledStateForAssignButton() {
@@ -361,8 +366,40 @@ public class ProjectsTab {
 	 * Assign project based on input fields.
 	 */
 	private void assignProject() {
+		final ActiveSpan s_assignProject = JaegerUtil.getInstance().createNewActiveSpan("Assign Project");
+		try {
+			ProjectAssignment projectAssignment = collectData();
 
+			s_assignProject.setTag("Project", projectAssignment.getProject());
+			s_assignProject.setTag("Employee", employeeComboBox.getValue());
+			s_assignProject.setTag("From:", fromDateField.getValue().toString());
+			s_assignProject.setTag("To:", toDateField.getValue().toString());
 
+			InfluxService.getInstance().assignProjects(projectAssignment);
+			CompletableFuture.runAsync(new Runnable() {
+
+				@Override
+				public void run() {
+					ActiveSpan asyncSpan = JaegerUtil.getTracer().buildSpan("async-createWeekEndsAndPublicHolidays")
+							.asChildOf(s_assignProject).startActive();
+					InfluxService.getInstance().createWeekEndsAndPublicHolidays(employeeComboBox.getValue(),
+							fromDateField.getValue(), toDateField.getValue());
+					asyncSpan.deactivate();
+				}
+			});
+
+			if (reloadPageCheckBox.getValue()) {
+				Page.getCurrent().getJavaScript().execute(
+						"var grafanaFrame = document.getElementsByClassName(\"v-browserframe\")[0].children[0]; grafanaFrame.src = grafanaFrame.src;");
+			}
+		} catch (Throwable throwable) {
+			s_assignProject.log("Error: " + throwable.getMessage());
+		} finally {
+			s_assignProject.deactivate();
+		}
+	}
+
+	private ProjectAssignment collectData() {
 		double dailyRate = getDailyRate();
 		double expenses = getExpenses();
 		String project = projectComboBox.getValue();
@@ -397,25 +434,7 @@ public class ProjectsTab {
 				.from(fromDateField.getValue()).to(toDateField.getValue()).daysOfWeek(checkBoxGroup.getValue())
 				.skipHolidays(skipPublicHolidaysCheckBox.getValue()).skipEvents(skipOtherEventsCheckBox.getValue())
 				.color(color).notes(notes).expenses(expenses);
-		InfluxService.getInstance().assignProjects(builder.build());
-		
-
-		
-		CompletableFuture.runAsync(new  Runnable() {
-			
-			@Override
-			public void run() {
-				InfluxService.getInstance().createWeekEndsAndPublicHolidays(employeeComboBox.getValue(),
-						fromDateField.getValue(), toDateField.getValue());
-			}});
-		
-
-		
-		if (reloadPageCheckBox.getValue()) {
-			Page.getCurrent().getJavaScript().execute("var grafanaFrame = document.getElementsByClassName(\"v-browserframe\")[0].children[0]; grafanaFrame.src = grafanaFrame.src;");
-		}
-
-		
+		return builder.build();
 	}
 
 	/**
